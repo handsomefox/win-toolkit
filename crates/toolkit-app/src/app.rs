@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use eframe::egui::{self, RichText};
 use toolkit_core::{
     Elevation, Operation, Risk, SandboxConfig, StartupEntry, StartupScope, SystemInfo,
-    format_bytes, health_operations, launcher, network_operations, performance_operations,
+    format_bytes, health_groups, launcher, network_operations, performance_operations,
 };
 
 use crate::theme;
@@ -76,7 +76,7 @@ pub(crate) struct ToolkitApp {
     overview: Option<SystemInfo>,
     sandbox: SandboxConfig,
     startup: Option<Vec<StartupEntry>>,
-    health: Vec<Operation>,
+    health: Vec<(&'static str, Vec<Operation>)>,
     network: Vec<Operation>,
     performance: Vec<Operation>,
     diagnostics: Vec<Operation>,
@@ -96,7 +96,7 @@ impl ToolkitApp {
             startup: None,
             diagnostics: build_diagnostics(log_path.as_deref()),
             log_path,
-            health: health_operations(),
+            health: health_groups(),
             network: network_operations(),
             performance: performance_operations(),
         }
@@ -193,8 +193,8 @@ impl ToolkitApp {
             .show(root, |ui| match self.section {
                 Section::Overview => self.draw_overview(ui),
                 Section::Health => {
-                    let ops = self.health.clone();
-                    self.draw_operation_section(ui, "Health & Repair", &ops);
+                    let groups = self.health.clone();
+                    self.draw_health(ui, &groups);
                 }
                 Section::Network => {
                     let ops = self.network.clone();
@@ -238,40 +238,52 @@ impl ToolkitApp {
                     });
                 });
                 ui.add_space(theme::SPACE_MD);
-                info_row(
-                    ui,
-                    "OS",
-                    &format!("{} (build {})", info.os_name, info.os_build),
-                );
-                info_row(ui, "Machine", &info.computer_name);
-                info_row(ui, "Uptime", &info.uptime);
-                info_row(
-                    ui,
-                    "CPU",
-                    &format!("{} ({} logical)", info.cpu, info.logical_cpus),
-                );
-                info_row(
-                    ui,
-                    "Memory",
-                    &format!(
-                        "{} free of {}",
-                        format_bytes(info.available_memory),
-                        format_bytes(info.total_memory)
-                    ),
-                );
-                ui.add_space(theme::SPACE_SM);
-                ui.label(RichText::new("Drives").family(theme::bold()));
-                for drive in &info.drives {
+                overview_card(ui, |ui| {
                     info_row(
                         ui,
-                        &drive.name,
+                        "OS",
+                        &format!("{} (build {})", info.os_name, info.os_build),
+                    );
+                    info_row(ui, "Machine", &info.computer_name);
+                    if !info.system_model.is_empty() {
+                        info_row(ui, "Model", &info.system_model);
+                    }
+                    info_row(ui, "Uptime", &info.uptime);
+                    info_row(
+                        ui,
+                        "CPU",
+                        &format!("{} ({} logical)", info.cpu, info.logical_cpus),
+                    );
+                    for (index, gpu) in info.gpus.iter().enumerate() {
+                        let label = if index == 0 { "GPU" } else { "" };
+                        info_row(ui, label, gpu);
+                    }
+                    info_row(
+                        ui,
+                        "Memory",
                         &format!(
                             "{} free of {}",
-                            format_bytes(drive.free),
-                            format_bytes(drive.total)
+                            format_bytes(info.available_memory),
+                            format_bytes(info.total_memory)
                         ),
                     );
-                }
+                });
+                ui.add_space(theme::SPACE_MD);
+                ui.label(RichText::new("Drives").family(theme::bold()));
+                ui.add_space(theme::SPACE_XS);
+                overview_card(ui, |ui| {
+                    for drive in &info.drives {
+                        info_row(
+                            ui,
+                            &drive.name,
+                            &format!(
+                                "{} free of {}",
+                                format_bytes(drive.free),
+                                format_bytes(drive.total)
+                            ),
+                        );
+                    }
+                });
             });
         if refresh {
             self.overview = Some(toolkit_platform::system_info());
@@ -285,6 +297,7 @@ impl ToolkitApp {
         ui.heading("Windows Sandbox");
         ui.add_space(theme::SPACE_MD);
         let available = sandbox_available();
+        let mut open_features = false;
         if !available {
             ui.label(
                 RichText::new(
@@ -293,7 +306,20 @@ impl ToolkitApp {
                 )
                 .color(theme::WARNING),
             );
+            ui.add_space(theme::SPACE_XS);
+            if ui.button("Open Windows Features").clicked() {
+                open_features = true;
+            }
             ui.add_space(theme::SPACE_SM);
+        }
+        if open_features {
+            self.start(launcher(
+                "open-optionalfeatures",
+                "Windows Features",
+                "Opens the Windows optional features dialog.",
+                "optionalfeatures".to_owned(),
+                Vec::new(),
+            ));
         }
         ui.label(
             RichText::new("Build a disposable, isolated Windows environment.").color(theme::MUTED),
@@ -322,13 +348,6 @@ impl ToolkitApp {
         if launch {
             self.launch_sandbox();
         }
-
-        if let Some(run) = &self.run {
-            ui.add_space(theme::SPACE_MD);
-            ui.separator();
-            ui.add_space(theme::SPACE_SM);
-            draw_run_output(ui, run);
-        }
     }
 
     fn launch_sandbox(&mut self) {
@@ -355,7 +374,13 @@ impl ToolkitApp {
         if self.startup.is_none() {
             self.startup = Some(toolkit_platform::list_startup());
         }
-        let entries = self.startup.clone().unwrap_or_default();
+        let mut entries = self.startup.clone().unwrap_or_default();
+        entries.sort_by(|a, b| {
+            let scope_rank = |scope| u8::from(scope != StartupScope::CurrentUser);
+            scope_rank(a.scope)
+                .cmp(&scope_rank(b.scope))
+                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        });
         let mut refresh = false;
         let mut toggle: Option<(StartupScope, String, bool)> = None;
         egui::ScrollArea::vertical()
@@ -412,11 +437,34 @@ impl ToolkitApp {
                     }
                     ui.add_space(theme::SPACE_SM);
                 }
-                if let Some(run) = &self.run {
+            });
+        if let Some(operation) = clicked {
+            self.on_operation_clicked(operation);
+        }
+    }
+
+    fn draw_health(&mut self, ui: &mut egui::Ui, groups: &[(&'static str, Vec<Operation>)]) {
+        let running = self.is_running();
+        let mut clicked: Option<Operation> = None;
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.heading("Health & Repair");
+                ui.add_space(theme::SPACE_MD);
+                for (group, ops) in groups {
+                    ui.label(
+                        RichText::new(*group)
+                            .family(theme::bold())
+                            .color(theme::MUTED),
+                    );
+                    ui.add_space(theme::SPACE_XS);
+                    for operation in ops {
+                        if operation_card(ui, operation, running) {
+                            clicked = Some(operation.clone());
+                        }
+                        ui.add_space(theme::SPACE_SM);
+                    }
                     ui.add_space(theme::SPACE_SM);
-                    ui.separator();
-                    ui.add_space(theme::SPACE_SM);
-                    draw_run_output(ui, run);
                 }
             });
         if let Some(operation) = clicked {
@@ -424,16 +472,82 @@ impl ToolkitApp {
         }
     }
 
-    fn draw_about(&self, ui: &mut egui::Ui) {
+    /// The bottom panel showing the current or most recent operation's status and
+    /// captured output. Shared across sections so output never depends on which
+    /// section is visible.
+    fn draw_run_panel(&mut self, root: &mut egui::Ui) {
+        if self.run.is_none() {
+            return;
+        }
+        let mut dismiss = false;
+        egui::Panel::bottom("run-output")
+            .resizable(true)
+            .default_size(260.0)
+            .min_size(96.0)
+            .frame(
+                egui::Frame::new()
+                    .fill(theme::SURFACE)
+                    .inner_margin(egui::Margin::symmetric(12, 10)),
+            )
+            .show(root, |ui| {
+                let Some(run) = &self.run else {
+                    return;
+                };
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(run.label).family(theme::bold()));
+                    let (text, color) = status_text(&run.status);
+                    ui.label(RichText::new(text).color(color));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Dismiss").clicked() {
+                            dismiss = true;
+                        }
+                    });
+                });
+                if run.is_capture {
+                    ui.add_space(theme::SPACE_SM);
+                    let running = matches!(run.status, RunStatus::Running);
+                    egui::ScrollArea::vertical()
+                        .id_salt("run-output-scroll")
+                        .auto_shrink([false, false])
+                        .stick_to_bottom(running)
+                        .show(ui, |ui| {
+                            ui.style_mut().interaction.selectable_labels = true;
+                            for line in &run.lines {
+                                ui.monospace(line);
+                            }
+                        });
+                }
+            });
+        if dismiss {
+            self.run = None;
+        }
+    }
+
+    fn draw_about(&mut self, ui: &mut egui::Ui) {
         ui.heading(toolkit_core::APP_TITLE);
         ui.add_space(theme::SPACE_SM);
         ui.label(RichText::new(concat!("Version ", env!("CARGO_PKG_VERSION"))).color(theme::MUTED));
         ui.add_space(theme::SPACE_SM);
         ui.hyperlink("https://github.com/handsomefox/win-toolkit");
         ui.add_space(theme::SPACE_MD);
-        if let Some(path) = &self.log_path {
+        let logs_dir = self
+            .log_path
+            .as_deref()
+            .and_then(std::path::Path::parent)
+            .map(std::path::Path::to_path_buf);
+        if let Some(dir) = logs_dir {
             ui.label(RichText::new("Diagnostics log").family(theme::bold()));
-            ui.label(RichText::new(path.display().to_string()).color(theme::MUTED));
+            ui.label(RichText::new(dir.display().to_string()).color(theme::MUTED));
+            ui.add_space(theme::SPACE_XS);
+            if ui.button("Open logs folder").clicked() {
+                self.start(launcher(
+                    "open-logs-folder",
+                    "Logs folder",
+                    "Opens the folder containing this app's diagnostics logs.",
+                    dir.to_string_lossy().into_owned(),
+                    Vec::new(),
+                ));
+            }
         }
         ui.add_space(theme::SPACE_MD);
         ui.label(
@@ -504,6 +618,7 @@ fn startup_card(ui: &mut egui::Ui, entry: &StartupEntry) -> Option<bool> {
         .corner_radius(theme::RADIUS_MD)
         .inner_margin(12)
         .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
             ui.horizontal(|ui| {
                 ui.vertical(|ui| {
                     ui.label(RichText::new(&entry.name).family(theme::bold()));
@@ -549,6 +664,19 @@ fn write_sandbox_config(config: SandboxConfig) -> Result<String, String> {
     Ok(path.to_string_lossy().into_owned())
 }
 
+/// Wraps read-only content in a full-width surface card.
+fn overview_card(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::new()
+        .fill(theme::SURFACE)
+        .stroke(egui::Stroke::new(1.0, theme::BORDER))
+        .corner_radius(theme::RADIUS_MD)
+        .inner_margin(12)
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            content(ui);
+        });
+}
+
 /// Draws a labelled read-only field: a fixed-width muted label and its value.
 fn info_row(ui: &mut egui::Ui, label: &str, value: &str) {
     ui.horizontal(|ui| {
@@ -576,6 +704,7 @@ fn operation_card(ui: &mut egui::Ui, operation: &Operation, running: bool) -> bo
         .corner_radius(theme::RADIUS_MD)
         .inner_margin(12)
         .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
             ui.label(
                 RichText::new(operation.label)
                     .family(theme::bold())
@@ -604,28 +733,6 @@ fn operation_card(ui: &mut egui::Ui, operation: &Operation, running: bool) -> bo
             }
         });
     clicked
-}
-
-fn draw_run_output(ui: &mut egui::Ui, run: &RunView) {
-    ui.label(RichText::new(run.label).family(theme::bold()));
-    ui.add_space(theme::SPACE_XS);
-    let (text, color) = status_text(&run.status);
-    ui.label(RichText::new(text).color(color));
-    if run.is_capture {
-        ui.add_space(theme::SPACE_SM);
-        let running = matches!(run.status, RunStatus::Running);
-        egui::ScrollArea::vertical()
-            .id_salt("run-output")
-            .max_height(320.0)
-            .auto_shrink([false, false])
-            .stick_to_bottom(running)
-            .show(ui, |ui| {
-                ui.style_mut().interaction.selectable_labels = true;
-                for line in &run.lines {
-                    ui.monospace(line);
-                }
-            });
-    }
 }
 
 fn status_text(status: &RunStatus) -> (String, egui::Color32) {
@@ -722,6 +829,7 @@ impl eframe::App for ToolkitApp {
         self.drain_events();
         Self::draw_header(root);
         self.draw_sidebar(root);
+        self.draw_run_panel(root);
         self.draw_central(root);
         self.draw_confirm(&ctx);
     }

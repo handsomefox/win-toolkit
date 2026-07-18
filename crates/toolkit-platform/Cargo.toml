@@ -10,7 +10,7 @@ description = "Windows platform integration for win-toolkit: known folders, app-
 workspace = true
 
 [dependencies]
-toolkit-core = { version = "=0.1.0", path = "../toolkit-core" }
+toolkit-core = { version = "=0.2.0", path = "../toolkit-core" }
 thiserror.workspace = true
 
 [target."cfg(windows)".dependencies]

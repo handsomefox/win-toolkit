@@ -18,9 +18,11 @@ pub fn system_info() -> SystemInfo {
             os_name: "Not Windows (development build)".to_owned(),
             os_build: String::new(),
             computer_name: std::env::var("HOSTNAME").unwrap_or_default(),
+            system_model: String::new(),
             uptime: toolkit_core::format_uptime(0),
             cpu: "Unavailable off Windows".to_owned(),
             logical_cpus,
+            gpus: Vec::new(),
             total_memory: 0,
             available_memory: 0,
             drives: Vec::new(),
@@ -47,13 +49,49 @@ mod imp {
             os_name: os_name(),
             os_build: os_build(),
             computer_name: std::env::var("COMPUTERNAME").unwrap_or_default(),
+            system_model: system_model(),
             uptime: uptime(),
             cpu: cpu_name(),
             logical_cpus,
+            gpus: gpus(),
             total_memory,
             available_memory,
             drives: fixed_drives(),
         }
+    }
+
+    fn system_model() -> String {
+        let Ok(key) = LOCAL_MACHINE.open(r"HARDWARE\DESCRIPTION\System\BIOS") else {
+            return String::new();
+        };
+        let manufacturer = key.get_string("SystemManufacturer").unwrap_or_default();
+        let product = key.get_string("SystemProductName").unwrap_or_default();
+        format!("{} {}", manufacturer.trim(), product.trim())
+            .trim()
+            .to_owned()
+    }
+
+    fn gpus() -> Vec<String> {
+        // Display adapters live under the Class GUID for display devices; each
+        // numbered subkey has a `DriverDesc`.
+        const DISPLAY_CLASS: &str =
+            r"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}";
+        let Ok(class) = LOCAL_MACHINE.open(DISPLAY_CLASS) else {
+            return Vec::new();
+        };
+        let Ok(subkeys) = class.keys() else {
+            return Vec::new();
+        };
+        let mut names = Vec::new();
+        for subkey in subkeys {
+            if let Ok(adapter) = class.open(&subkey)
+                && let Ok(desc) = adapter.get_string("DriverDesc")
+                && !names.contains(&desc)
+            {
+                names.push(desc);
+            }
+        }
+        names
     }
 
     fn os_name() -> String {

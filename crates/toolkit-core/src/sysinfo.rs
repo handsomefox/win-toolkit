@@ -22,12 +22,16 @@ pub struct SystemInfo {
     pub os_build: String,
     /// The machine (computer) name.
     pub computer_name: String,
+    /// System manufacturer and model, e.g. "ASUS ROG STRIX B550-F".
+    pub system_model: String,
     /// Human-readable uptime, e.g. "3d 4h 12m".
     pub uptime: String,
     /// CPU model name.
     pub cpu: String,
     /// Number of logical processors.
     pub logical_cpus: usize,
+    /// Installed display adapters (GPUs).
+    pub gpus: Vec<String>,
     /// Total physical memory in bytes.
     pub total_memory: u64,
     /// Currently available physical memory in bytes.
@@ -51,12 +55,18 @@ impl SystemInfo {
             self.os_name, self.os_build
         );
         let _ = writeln!(report, "Machine:   {}", self.computer_name);
+        if !self.system_model.is_empty() {
+            let _ = writeln!(report, "Model:     {}", self.system_model);
+        }
         let _ = writeln!(report, "Uptime:    {}", self.uptime);
         let _ = writeln!(
             report,
             "CPU:       {} ({} logical processors)",
             self.cpu, self.logical_cpus
         );
+        for gpu in &self.gpus {
+            let _ = writeln!(report, "GPU:       {gpu}");
+        }
         let _ = writeln!(
             report,
             "Memory:    {} free of {}",
@@ -138,9 +148,11 @@ mod tests {
             os_name: "Windows 11 Pro".to_owned(),
             os_build: "26100.1".to_owned(),
             computer_name: "PC".to_owned(),
+            system_model: "ACME Box".to_owned(),
             uptime: "1h 0m".to_owned(),
             cpu: "Test CPU".to_owned(),
             logical_cpus: 8,
+            gpus: vec!["Test GPU".to_owned()],
             total_memory: 16 * 1024 * 1024 * 1024,
             available_memory: 8 * 1024 * 1024 * 1024,
             drives: vec![DriveInfo {
@@ -151,6 +163,7 @@ mod tests {
         };
         let report = info.to_report();
         assert!(report.contains("Windows 11 Pro (build 26100.1)"));
+        assert!(report.contains("GPU:       Test GPU"));
         assert!(report.contains(r"C:\ 512 B free of 1.0 KiB"));
     }
 }

@@ -78,150 +78,157 @@ pub fn launcher(
     }
 }
 
-/// The Health &amp; Repair catalog: system file and image repair, component-store
-/// cleanup, disk check, Windows Update reset, and restore-point creation.
+/// The Health &amp; Repair catalog, grouped for the UI: repair, component-store
+/// cleanup, and recovery.
 #[must_use]
-#[expect(
-    clippy::too_many_lines,
-    reason = "a flat catalog of operations reads more clearly as a single list"
-)]
-pub fn health_operations() -> Vec<Operation> {
+pub fn health_groups() -> Vec<(&'static str, Vec<Operation>)> {
     vec![
-        Operation {
-            id: "sfc-scannow",
-            label: "System File Checker (sfc /scannow)",
-            description: "Scans all protected Windows system files and repairs corrupted ones from \
-                          the local component store. Makes no other changes.",
-            duration_hint: "Usually 5-15 minutes",
-            risk: Risk::High,
-            elevation: Elevation::Administrator,
-            cancelable: false,
-            execution: Execution::Capture(CommandLine::program("sfc", &["/scannow"])),
-        },
-        Operation {
-            id: "dism-restorehealth",
-            label: "DISM Restore Health",
-            description: "Repairs the Windows component store using Windows Update as the source of \
-                          known-good files. Run this if System File Checker cannot repair some \
-                          files.",
-            duration_hint: "Usually 5-20 minutes; needs internet",
-            risk: Risk::High,
-            elevation: Elevation::Administrator,
-            cancelable: false,
-            execution: Execution::Capture(CommandLine::program(
-                "dism",
-                &["/Online", "/Cleanup-Image", "/RestoreHealth"],
-            )),
-        },
-        Operation {
-            id: "dism-scanhealth",
-            label: "DISM Scan Health",
-            description: "Checks the Windows component store for corruption without making any \
-                          changes. A read-only diagnostic.",
-            duration_hint: "Usually a few minutes",
-            risk: Risk::ReadOnly,
-            elevation: Elevation::Administrator,
-            cancelable: false,
-            execution: Execution::Capture(CommandLine::program(
-                "dism",
-                &["/Online", "/Cleanup-Image", "/ScanHealth"],
-            )),
-        },
-        Operation {
-            id: "dism-analyze-store",
-            label: "Analyze component store (WinSxS)",
-            description: "Reports the size of the WinSxS component store and whether a cleanup is \
-                          recommended. Makes no changes.",
-            duration_hint: "Usually under a minute",
-            risk: Risk::ReadOnly,
-            elevation: Elevation::Administrator,
-            cancelable: false,
-            execution: Execution::Capture(CommandLine::program(
-                "dism",
-                &["/Online", "/Cleanup-Image", "/AnalyzeComponentStore"],
-            )),
-        },
-        Operation {
-            id: "dism-startcomponentcleanup-resetbase",
-            label: "Clean up component store (/ResetBase)",
-            description: "Removes superseded versions of updated components from WinSxS to reclaim \
-                          disk space. /ResetBase means installed updates can no longer be \
-                          uninstalled afterwards.",
-            duration_hint: "Usually 5-20 minutes",
-            risk: Risk::High,
-            elevation: Elevation::Administrator,
-            cancelable: false,
-            execution: Execution::Capture(CommandLine::program(
-                "dism",
-                &[
-                    "/Online",
-                    "/Cleanup-Image",
-                    "/StartComponentCleanup",
-                    "/ResetBase",
-                ],
-            )),
-        },
-        Operation {
-            id: "dism-spsuperseded",
-            label: "Remove backed-up service pack files (/SPSuperseded)",
-            description: "Removes files backed up during service-pack or feature-update \
-                          installation, freeing disk space. The updates can no longer be \
-                          uninstalled afterwards.",
-            duration_hint: "Usually a few minutes",
-            risk: Risk::Medium,
-            elevation: Elevation::Administrator,
-            cancelable: false,
-            execution: Execution::Capture(CommandLine::program(
-                "dism",
-                &["/Online", "/Cleanup-Image", "/SPSuperseded"],
-            )),
-        },
-        Operation {
-            id: "chkdsk-scan",
-            label: "Check system drive (chkdsk C: /scan)",
-            description: "Scans the system drive for file-system errors online, without locking it \
-                          or requiring a reboot. Reports problems it finds.",
-            duration_hint: "Usually a few minutes",
-            risk: Risk::Medium,
-            elevation: Elevation::Administrator,
-            cancelable: false,
-            execution: Execution::Capture(CommandLine::program("chkdsk", &["C:", "/scan"])),
-        },
-        Operation {
-            id: "reset-windows-update",
-            label: "Reset Windows Update",
-            description: "Stops the Windows Update, BITS, and Cryptographic services, renames the \
-                          SoftwareDistribution and catroot2 folders to .old (they are rebuilt \
-                          automatically; nothing is deleted), then restarts the services. Use this \
-                          when Windows Update is stuck or failing. A reboot afterwards is \
-                          recommended.",
-            duration_hint: "Under a minute",
-            risk: Risk::Medium,
-            elevation: Elevation::Administrator,
-            cancelable: false,
-            execution: Execution::Capture(CommandLine::Script(
-                "net stop wuauserv & net stop bits & net stop cryptsvc & \
-                 ren \"%SystemRoot%\\SoftwareDistribution\" SoftwareDistribution.old & \
-                 ren \"%SystemRoot%\\System32\\catroot2\" catroot2.old & \
-                 net start cryptsvc & net start bits & net start wuauserv & \
-                 echo Done. If a folder could not be renamed, a reboot may be required first."
-                    .to_owned(),
-            )),
-        },
-        Operation {
-            id: "create-restore-point",
-            label: "Create a System Restore point",
-            description: "Creates a restore point you can roll back to before making other changes. \
-                          If System Protection is turned off for the system drive, or a restore \
-                          point was already created in the last 24 hours, Windows will not create \
-                          one — the result is reported here.",
-            duration_hint: "Usually under a minute",
-            risk: Risk::Low,
-            elevation: Elevation::Administrator,
-            cancelable: false,
-            execution: Execution::Capture(CommandLine::Script(RESTORE_POINT_SCRIPT.to_owned())),
-        },
+        (
+            "Repair",
+            vec![sfc_scannow(), dism_restore_health(), chkdsk_scan()],
+        ),
+        (
+            "Component store (WinSxS)",
+            vec![dism_analyze_store(), dism_cleanup_resetbase()],
+        ),
+        (
+            "Recovery",
+            vec![reset_windows_update(), create_restore_point()],
+        ),
     ]
+}
+
+/// The Health &amp; Repair operations as a flat list.
+#[must_use]
+pub fn health_operations() -> Vec<Operation> {
+    health_groups()
+        .into_iter()
+        .flat_map(|(_, ops)| ops)
+        .collect()
+}
+
+fn sfc_scannow() -> Operation {
+    Operation {
+        id: "sfc-scannow",
+        label: "System File Checker (sfc /scannow)",
+        description: "Scans all protected Windows system files and repairs corrupted ones from the \
+                      local component store. Makes no other changes.",
+        duration_hint: "Usually 5-15 minutes",
+        risk: Risk::High,
+        elevation: Elevation::Administrator,
+        cancelable: false,
+        execution: Execution::Capture(CommandLine::program("sfc", &["/scannow"])),
+    }
+}
+
+fn dism_restore_health() -> Operation {
+    Operation {
+        id: "dism-restorehealth",
+        label: "DISM Restore Health",
+        description: "Repairs the Windows component store using Windows Update as the source of \
+                      known-good files. Run this if System File Checker cannot repair some files.",
+        duration_hint: "Usually 5-20 minutes; needs internet",
+        risk: Risk::High,
+        elevation: Elevation::Administrator,
+        cancelable: false,
+        execution: Execution::Capture(CommandLine::program(
+            "dism",
+            &["/Online", "/Cleanup-Image", "/RestoreHealth"],
+        )),
+    }
+}
+
+fn chkdsk_scan() -> Operation {
+    Operation {
+        id: "chkdsk-scan",
+        label: "Check system drive (chkdsk C: /scan)",
+        description: "Scans the system drive for file-system errors online, without locking it or \
+                      requiring a reboot. Reports problems it finds.",
+        duration_hint: "Usually a few minutes",
+        risk: Risk::Medium,
+        elevation: Elevation::Administrator,
+        cancelable: false,
+        execution: Execution::Capture(CommandLine::program("chkdsk", &["C:", "/scan"])),
+    }
+}
+
+fn dism_analyze_store() -> Operation {
+    Operation {
+        id: "dism-analyze-store",
+        label: "Analyze component store (WinSxS)",
+        description: "Reports the size of the WinSxS component store and whether a cleanup is \
+                      recommended. Makes no changes.",
+        duration_hint: "Usually under a minute",
+        risk: Risk::ReadOnly,
+        elevation: Elevation::Administrator,
+        cancelable: false,
+        execution: Execution::Capture(CommandLine::program(
+            "dism",
+            &["/Online", "/Cleanup-Image", "/AnalyzeComponentStore"],
+        )),
+    }
+}
+
+fn dism_cleanup_resetbase() -> Operation {
+    Operation {
+        id: "dism-startcomponentcleanup-resetbase",
+        label: "Clean up component store (/ResetBase)",
+        description: "Removes superseded versions of updated components from WinSxS to reclaim disk \
+                      space. /ResetBase means installed updates can no longer be uninstalled \
+                      afterwards.",
+        duration_hint: "Usually 5-20 minutes",
+        risk: Risk::High,
+        elevation: Elevation::Administrator,
+        cancelable: false,
+        execution: Execution::Capture(CommandLine::program(
+            "dism",
+            &[
+                "/Online",
+                "/Cleanup-Image",
+                "/StartComponentCleanup",
+                "/ResetBase",
+            ],
+        )),
+    }
+}
+
+fn reset_windows_update() -> Operation {
+    Operation {
+        id: "reset-windows-update",
+        label: "Reset Windows Update",
+        description: "Stops the Windows Update, BITS, and Cryptographic services, renames the \
+                      SoftwareDistribution and catroot2 folders to .old (they are rebuilt \
+                      automatically; nothing is deleted), then restarts the services. Use this \
+                      when Windows Update is stuck or failing. A reboot afterwards is recommended.",
+        duration_hint: "Under a minute",
+        risk: Risk::Medium,
+        elevation: Elevation::Administrator,
+        cancelable: false,
+        execution: Execution::Capture(CommandLine::Script(
+            "net stop wuauserv & net stop bits & net stop cryptsvc & \
+             ren \"%SystemRoot%\\SoftwareDistribution\" SoftwareDistribution.old & \
+             ren \"%SystemRoot%\\System32\\catroot2\" catroot2.old & \
+             net start cryptsvc & net start bits & net start wuauserv & \
+             echo Done. If a folder could not be renamed, a reboot may be required first."
+                .to_owned(),
+        )),
+    }
+}
+
+fn create_restore_point() -> Operation {
+    Operation {
+        id: "create-restore-point",
+        label: "Create a System Restore point",
+        description: "Creates a restore point you can roll back to before making other changes. If \
+                      System Protection is turned off for the system drive, or a restore point was \
+                      already created in the last 24 hours, Windows will not create one — the \
+                      result is reported here.",
+        duration_hint: "Usually under a minute",
+        risk: Risk::Low,
+        elevation: Elevation::Administrator,
+        cancelable: false,
+        execution: Execution::Capture(CommandLine::Script(RESTORE_POINT_SCRIPT.to_owned())),
+    }
 }
 
 /// PowerShell that creates a restore point and reports the real outcome:
