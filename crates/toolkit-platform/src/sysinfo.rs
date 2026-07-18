@@ -57,10 +57,25 @@ mod imp {
     }
 
     fn os_name() -> String {
-        LOCAL_MACHINE
-            .open(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion")
-            .and_then(|key| key.get_string("ProductName"))
-            .unwrap_or_else(|_| "Windows".to_owned())
+        let Ok(key) = LOCAL_MACHINE.open(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion") else {
+            return "Windows".to_owned();
+        };
+        let name = key
+            .get_string("ProductName")
+            .unwrap_or_else(|_| "Windows".to_owned());
+        // Microsoft never updated `ProductName` for Windows 11 — it still reads
+        // "Windows 10 ...". Correct it using the build number (11 starts at
+        // build 22000) so the overview does not misreport the OS.
+        let build: u32 = key
+            .get_string("CurrentBuild")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0);
+        if build >= 22000 && name.contains("Windows 10") {
+            name.replace("Windows 10", "Windows 11")
+        } else {
+            name
+        }
     }
 
     fn os_build() -> String {
