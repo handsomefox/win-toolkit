@@ -9,5 +9,5 @@ pub mod exec;
 mod known_folders;
 pub mod paths;
 
-pub use exec::{ElevatedChild, ExecError, run_elevated};
+pub use exec::{CaptureOutput, ElevatedChild, ExecError, launch, run_capture, run_elevated};
 pub use paths::{app_data_dir, logs_dir, runs_dir};

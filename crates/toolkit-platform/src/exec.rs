@@ -32,6 +32,52 @@ pub use imp::ElevatedChild;
 #[cfg(not(windows))]
 pub use stub::ElevatedChild;
 
+/// The captured result of an unelevated command.
+pub struct CaptureOutput {
+    /// The process exit code (`-1` if it could not be determined).
+    pub code: i32,
+    /// Combined stdout and stderr bytes, still to be decoded.
+    pub output: Vec<u8>,
+}
+
+/// Runs `program` with `args` unelevated, capturing its combined output and exit
+/// code once it finishes. Intended for quick, read-only or user-scope commands.
+///
+/// # Errors
+///
+/// Returns [`ExecError::Unsupported`] on non-Windows platforms, or
+/// [`ExecError::Api`] if the process could not be launched.
+pub fn run_capture(program: &str, args: &[String]) -> Result<CaptureOutput, ExecError> {
+    #[cfg(windows)]
+    {
+        imp::run_capture(program, args)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (program, args);
+        Err(ExecError::Unsupported)
+    }
+}
+
+/// Opens `target` (a program, file, or folder) with the shell `open` verb,
+/// unelevated, without capturing output.
+///
+/// # Errors
+///
+/// Returns [`ExecError::Unsupported`] on non-Windows platforms, or
+/// [`ExecError::Api`] if the shell reports a launch failure.
+pub fn launch(target: &str, args: &[String]) -> Result<(), ExecError> {
+    #[cfg(windows)]
+    {
+        imp::launch(target, args)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (target, args);
+        Err(ExecError::Unsupported)
+    }
+}
+
 /// Launches `program` with `parameters` elevated (via the `runas` verb),
 /// returning a handle to the running child.
 ///
@@ -55,14 +101,23 @@ pub fn run_elevated(program: &str, parameters: &str) -> Result<ElevatedChild, Ex
 #[cfg(windows)]
 mod imp {
     use std::ffi::c_void;
+    use std::os::windows::process::CommandExt as _;
 
     use windows::Win32::Foundation::{CloseHandle, ERROR_CANCELLED, GetLastError, HANDLE};
     use windows::Win32::System::Threading::GetExitCodeProcess;
-    use windows::Win32::UI::Shell::{SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW};
-    use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
+    use windows::Win32::UI::Shell::{
+        SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW, ShellExecuteW,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{SW_HIDE, SW_SHOWNORMAL};
     use windows::core::{HSTRING, PCWSTR, w};
 
-    use super::ExecError;
+    use super::{CaptureOutput, ExecError};
+
+    /// Runs a child process without flashing a console window.
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    /// Values at or below this from `ShellExecuteW` indicate an error.
+    const SHELL_EXECUTE_MIN_SUCCESS: usize = 32;
 
     /// `GetExitCodeProcess` reports this value while the process is still
     /// running.
@@ -157,6 +212,51 @@ mod imp {
         Ok(ElevatedChild {
             handle: info.hProcess.0 as isize,
         })
+    }
+
+    pub(super) fn run_capture(program: &str, args: &[String]) -> Result<CaptureOutput, ExecError> {
+        let output = std::process::Command::new(program)
+            .args(args)
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map_err(|err| ExecError::Api(err.to_string()))?;
+        let mut bytes = output.stdout;
+        bytes.extend_from_slice(&output.stderr);
+        Ok(CaptureOutput {
+            code: output.status.code().unwrap_or(-1),
+            output: bytes,
+        })
+    }
+
+    pub(super) fn launch(target: &str, args: &[String]) -> Result<(), ExecError> {
+        let file = HSTRING::from(target);
+        // Kept alive for the duration of the call when non-empty.
+        let parameters = HSTRING::from(args.join(" "));
+        let parameters = if args.is_empty() {
+            PCWSTR::null()
+        } else {
+            PCWSTR(parameters.as_ptr())
+        };
+
+        // SAFETY: `file`/`parameters` outlive the call and the pointers are
+        // valid; a null directory and default show command are accepted.
+        let instance = unsafe {
+            ShellExecuteW(
+                None,
+                w!("open"),
+                PCWSTR(file.as_ptr()),
+                parameters,
+                PCWSTR::null(),
+                SW_SHOWNORMAL,
+            )
+        };
+        if instance.0.addr() <= SHELL_EXECUTE_MIN_SUCCESS {
+            return Err(ExecError::Api(format!(
+                "ShellExecute failed with code {}",
+                instance.0.addr()
+            )));
+        }
+        Ok(())
     }
 }
 

@@ -30,6 +30,43 @@ impl CommandSpec {
     }
 }
 
+/// A command line to run through `cmd.exe`, either as a structured program plus
+/// arguments or as a raw multi-step script (needed for sequences such as
+/// resetting Windows Update).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandLine {
+    /// A single program invoked with discrete arguments.
+    Program(CommandSpec),
+    /// A raw `cmd.exe` command line, used for multi-step sequences. The caller
+    /// is responsible for its correctness; the captured exit code is `cmd.exe`'s.
+    Script(String),
+}
+
+impl CommandLine {
+    /// Convenience constructor for a single-program command line.
+    #[must_use]
+    pub fn program(program: &str, args: &[&str]) -> Self {
+        CommandLine::Program(CommandSpec::new(program, args))
+    }
+
+    /// Renders the command portion (before any redirection): a quoted program
+    /// and arguments, or the raw script text.
+    #[must_use]
+    fn render(&self) -> String {
+        match self {
+            CommandLine::Program(spec) => {
+                let mut rendered = quote_if_needed(&spec.program).into_owned();
+                for arg in &spec.args {
+                    rendered.push(' ');
+                    rendered.push_str(&quote_if_needed(arg));
+                }
+                rendered
+            }
+            CommandLine::Script(raw) => raw.clone(),
+        }
+    }
+}
+
 /// Quotes a token only when it needs it (contains whitespace or is empty).
 /// Quoting tokens that do not need it can change how some programs parse their
 /// own command line, so it is applied sparingly.
@@ -41,29 +78,19 @@ fn quote_if_needed(token: &str) -> Cow<'_, str> {
     }
 }
 
-/// Builds the `lpParameters` string for launching `spec` through `cmd.exe`,
+/// Builds the `lpParameters` string for launching `command` through `cmd.exe`,
 /// redirecting both stdout and stderr to `output_path`.
 ///
-/// The result is `/c "<program> <args> > "<output_path>" 2>&1"`. `cmd.exe`'s
-/// `/c` quote handling strips the outer quote pair (there are more than two
-/// quotes and a redirection operator between them), leaving the inner command
-/// line intact — including the quoted output path, which is essential because
-/// it lives under a user profile that may contain spaces
-/// (`C:\Users\John Doe\...`).
+/// The result is `/c "<command> > "<output_path>" 2>&1"`. `cmd.exe`'s `/c` quote
+/// handling strips the outer quote pair (there are more than two quotes and a
+/// redirection operator between them), leaving the inner command line intact —
+/// including the quoted output path, which is essential because it lives under a
+/// user profile that may contain spaces (`C:\Users\John Doe\...`).
 #[must_use]
-pub fn elevated_cmd_parameters(spec: &CommandSpec, output_path: &str) -> String {
-    let mut inner = String::new();
-    inner.push_str(&quote_if_needed(&spec.program));
-    for arg in &spec.args {
-        inner.push(' ');
-        inner.push_str(&quote_if_needed(arg));
-    }
+pub fn elevated_cmd_parameters(command: &CommandLine, output_path: &str) -> String {
     // The output path is always quoted: it is a filesystem path that routinely
     // contains spaces.
-    inner.push_str(" > \"");
-    inner.push_str(output_path);
-    inner.push_str("\" 2>&1");
-    format!("/c \"{inner}\"")
+    format!(r#"/c "{} > "{output_path}" 2>&1""#, command.render())
 }
 
 /// Decodes bytes captured from a redirected console into a `String`.
@@ -129,15 +156,40 @@ pub fn console_lines(bytes: &[u8]) -> Vec<String> {
         .collect()
 }
 
+/// Tidies decoded output lines for display: drops leading blank lines, collapses
+/// runs of blank lines to a single blank, and trims trailing blanks.
+///
+/// Redirected tools such as `sfc` emit many blank and padding lines around their
+/// real output; without this the meaningful text is pushed far down the view.
+#[must_use]
+pub fn compact_lines(lines: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::with_capacity(lines.len());
+    for line in lines {
+        if line.trim().is_empty() {
+            // Skip leading blanks and collapse consecutive blanks into one.
+            if out.last().is_none_or(String::is_empty) {
+                continue;
+            }
+            out.push(String::new());
+        } else {
+            out.push(line.clone());
+        }
+    }
+    while out.last().is_some_and(String::is_empty) {
+        out.pop();
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn parameters_quote_only_spaced_tokens_and_always_the_path() {
-        let spec = CommandSpec::new("sfc", &["/scannow"]);
+        let command = CommandLine::program("sfc", &["/scannow"]);
         let params = elevated_cmd_parameters(
-            &spec,
+            &command,
             r"C:\Users\John Doe\AppData\Local\win-toolkit\runs\sfc.log",
         );
         assert_eq!(
@@ -148,11 +200,22 @@ mod tests {
 
     #[test]
     fn parameters_quote_arguments_that_contain_spaces() {
-        let spec = CommandSpec::new("schtasks.exe", &["/Run", "/TN", r"\Microsoft\Windows\x"]);
-        let params = elevated_cmd_parameters(&spec, r"C:\out.log");
+        let command =
+            CommandLine::program("schtasks.exe", &["/Run", "/TN", r"\Microsoft\Windows\x"]);
+        let params = elevated_cmd_parameters(&command, r"C:\out.log");
         assert_eq!(
             params,
             r#"/c "schtasks.exe /Run /TN \Microsoft\Windows\x > "C:\out.log" 2>&1""#
+        );
+    }
+
+    #[test]
+    fn parameters_pass_a_raw_script_through_unchanged() {
+        let command = CommandLine::Script("net stop wuauserv & net start wuauserv".to_owned());
+        let params = elevated_cmd_parameters(&command, r"C:\out.log");
+        assert_eq!(
+            params,
+            r#"/c "net stop wuauserv & net start wuauserv > "C:\out.log" 2>&1""#
         );
     }
 
@@ -176,6 +239,24 @@ mod tests {
     #[test]
     fn decodes_utf8_by_default() {
         assert_eq!(decode_console_output(b"plain ascii"), "plain ascii");
+    }
+
+    #[test]
+    fn compact_lines_trims_and_collapses_blanks() {
+        let input = [
+            String::new(),
+            String::new(),
+            "a".to_owned(),
+            String::new(),
+            String::new(),
+            "b".to_owned(),
+            String::new(),
+            String::new(),
+        ];
+        assert_eq!(
+            compact_lines(&input),
+            vec!["a".to_owned(), String::new(), "b".to_owned()]
+        );
     }
 
     #[test]

@@ -1,14 +1,17 @@
-//! The background worker: a single thread that launches elevated operations and
-//! tails their captured output, talking to the UI over channels. The UI thread
-//! never blocks on a running operation.
+//! The background worker: a single thread that runs operations and tails their
+//! captured output, talking to the UI over channels. The UI thread never blocks
+//! on a running operation.
 
 use std::path::PathBuf;
 use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
-use toolkit_core::{Operation, console_lines, elevated_cmd_parameters};
-use toolkit_platform::{ExecError, run_elevated};
+use toolkit_core::{
+    CommandLine, Elevation, Execution, Operation, compact_lines, console_lines,
+    elevated_cmd_parameters,
+};
+use toolkit_platform::{ExecError, launch, run_capture, run_elevated};
 
 /// How often the worker re-reads the output file while an operation runs.
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
@@ -85,6 +88,65 @@ fn run(ctx: &egui::Context, commands: &Receiver<Command>, events: &Sender<Event>
 }
 
 fn run_operation(operation: &Operation, emit: &impl Fn(Event)) {
+    match &operation.execution {
+        Execution::Launch { target, args } => run_launch(operation, target, args, emit),
+        Execution::Capture(command) => {
+            if operation.elevation == Elevation::Administrator {
+                run_elevated_capture(operation, command, emit);
+            } else {
+                run_unelevated_capture(operation, command, emit);
+            }
+        }
+    }
+}
+
+/// Opens a program/file/folder without capturing output.
+fn run_launch(operation: &Operation, target: &str, args: &[String], emit: &impl Fn(Event)) {
+    tracing::info!(operation = operation.id, target, "launching target");
+    match launch(target, args) {
+        Ok(()) => emit(Event::Finished(Outcome::Success)),
+        Err(err) => {
+            tracing::warn!(operation = operation.id, "launch failed: {err}");
+            emit(Event::Finished(Outcome::Error(err.to_string())));
+        }
+    }
+}
+
+/// Runs a quick unelevated command to completion and reports its output.
+fn run_unelevated_capture(operation: &Operation, command: &CommandLine, emit: &impl Fn(Event)) {
+    let CommandLine::Program(spec) = command else {
+        emit(Event::Finished(Outcome::Error(
+            "this operation requires elevation to run".to_owned(),
+        )));
+        return;
+    };
+    emit(Event::Started);
+    tracing::info!(operation = operation.id, "running unelevated command");
+    match run_capture(&spec.program, &spec.args) {
+        Ok(result) => {
+            emit(Event::Output {
+                lines: compact_lines(&console_lines(&result.output)),
+            });
+            tracing::info!(
+                operation = operation.id,
+                code = result.code,
+                "command finished"
+            );
+            emit(Event::Finished(if result.code == 0 {
+                Outcome::Success
+            } else {
+                Outcome::Failed(result.code)
+            }));
+        }
+        Err(err) => {
+            tracing::warn!(operation = operation.id, "command failed: {err}");
+            emit(Event::Finished(Outcome::Error(err.to_string())));
+        }
+    }
+}
+
+/// Launches an elevated child, tailing its captured output until it exits.
+fn run_elevated_capture(operation: &Operation, command: &CommandLine, emit: &impl Fn(Event)) {
     let Some(output_path) = output_path(operation.id) else {
         emit(Event::Finished(Outcome::Error(
             "could not resolve the output directory".to_owned(),
@@ -100,7 +162,7 @@ fn run_operation(operation: &Operation, emit: &impl Fn(Event)) {
         return;
     }
 
-    let parameters = elevated_cmd_parameters(&operation.command, &output_path.to_string_lossy());
+    let parameters = elevated_cmd_parameters(command, &output_path.to_string_lossy());
     tracing::info!(operation = operation.id, "launching elevated operation");
     let child = match run_elevated("cmd.exe", &parameters) {
         Ok(child) => child,
@@ -155,7 +217,7 @@ fn output_path(operation_id: &str) -> Option<PathBuf> {
 
 fn read_output(path: &std::path::Path) -> Vec<String> {
     match std::fs::read(path) {
-        Ok(bytes) => console_lines(&bytes),
+        Ok(bytes) => compact_lines(&console_lines(&bytes)),
         // The file may not exist yet for the first poll; treat as empty.
         Err(_) => Vec::new(),
     }

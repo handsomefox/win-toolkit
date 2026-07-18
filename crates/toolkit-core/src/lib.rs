@@ -9,8 +9,13 @@
 pub mod command;
 pub mod operation;
 
-pub use command::{CommandSpec, console_lines, decode_console_output, elevated_cmd_parameters};
-pub use operation::{Operation, sfc_scannow};
+pub use command::{
+    CommandLine, CommandSpec, compact_lines, console_lines, decode_console_output,
+    elevated_cmd_parameters,
+};
+pub use operation::{
+    Execution, Operation, health_operations, launcher, network_operations, performance_operations,
+};
 
 /// The short, filesystem-safe application slug. Used for the app-data directory
 /// (`%LOCALAPPDATA%\win-toolkit`) and log file names.

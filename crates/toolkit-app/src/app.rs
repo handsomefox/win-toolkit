@@ -1,16 +1,18 @@
 //! The eframe application shell: the section sidebar, per-section views, and the
-//! confirm-then-run flow that drives elevated operations through the worker.
+//! confirm-then-run flow that drives operations through the worker.
 
 use std::path::PathBuf;
 
 use eframe::egui::{self, RichText};
-use toolkit_core::{Operation, sfc_scannow};
+use toolkit_core::{
+    Elevation, Operation, Risk, health_operations, launcher, network_operations,
+    performance_operations,
+};
 
 use crate::theme;
 use crate::worker::{self, Command, Event, Outcome, Worker};
 
-/// The sidebar sections. Only some are implemented in the current version; the
-/// rest render a placeholder so the navigation frame is in place.
+/// The sidebar sections.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Section {
     Overview,
@@ -52,6 +54,7 @@ impl Section {
 /// The state of the most recent (or current) operation run.
 struct RunView {
     label: &'static str,
+    is_capture: bool,
     status: RunStatus,
     lines: Vec<String>,
 }
@@ -70,6 +73,10 @@ pub(crate) struct ToolkitApp {
     run: Option<RunView>,
     confirm: Option<Operation>,
     log_path: Option<PathBuf>,
+    health: Vec<Operation>,
+    network: Vec<Operation>,
+    performance: Vec<Operation>,
+    diagnostics: Vec<Operation>,
 }
 
 impl ToolkitApp {
@@ -81,7 +88,11 @@ impl ToolkitApp {
             section: Section::Health,
             run: None,
             confirm: None,
+            diagnostics: build_diagnostics(log_path.as_deref()),
             log_path,
+            health: health_operations(),
+            network: network_operations(),
+            performance: performance_operations(),
         }
     }
 
@@ -115,9 +126,18 @@ impl ToolkitApp {
         }
     }
 
+    fn on_operation_clicked(&mut self, operation: Operation) {
+        if needs_confirmation(&operation) {
+            self.confirm = Some(operation);
+        } else {
+            self.start(operation);
+        }
+    }
+
     fn start(&mut self, operation: Operation) {
         self.run = Some(RunView {
             label: operation.label,
+            is_capture: operation.is_capture(),
             status: RunStatus::Running,
             lines: Vec::new(),
         });
@@ -165,7 +185,22 @@ impl ToolkitApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(theme::BACKGROUND).inner_margin(16))
             .show(root, |ui| match self.section {
-                Section::Health => self.draw_health(ui),
+                Section::Health => {
+                    let ops = self.health.clone();
+                    self.draw_operation_section(ui, "Health & Repair", &ops);
+                }
+                Section::Network => {
+                    let ops = self.network.clone();
+                    self.draw_operation_section(ui, "Network", &ops);
+                }
+                Section::Performance => {
+                    let ops = self.performance.clone();
+                    self.draw_operation_section(ui, "Performance", &ops);
+                }
+                Section::Diagnostics => {
+                    let ops = self.diagnostics.clone();
+                    self.draw_operation_section(ui, "Diagnostics", &ops);
+                }
                 Section::About => self.draw_about(ui),
                 other => Self::draw_placeholder(ui, other),
             });
@@ -177,70 +212,33 @@ impl ToolkitApp {
         ui.label(RichText::new("Coming in a later version.").color(theme::MUTED));
     }
 
-    fn draw_health(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Health & Repair");
-        ui.add_space(theme::SPACE_MD);
-        self.draw_operation_card(ui, &sfc_scannow());
-        if self.run.is_some() {
-            ui.add_space(theme::SPACE_MD);
-            ui.separator();
-            ui.add_space(theme::SPACE_SM);
-            self.draw_run_output(ui);
+    fn draw_operation_section(&mut self, ui: &mut egui::Ui, title: &str, ops: &[Operation]) {
+        let running = self.is_running();
+        let mut clicked: Option<Operation> = None;
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.heading(title);
+                ui.add_space(theme::SPACE_MD);
+                for operation in ops {
+                    if operation_card(ui, operation, running) {
+                        clicked = Some(operation.clone());
+                    }
+                    ui.add_space(theme::SPACE_SM);
+                }
+                if let Some(run) = &self.run {
+                    ui.add_space(theme::SPACE_SM);
+                    ui.separator();
+                    ui.add_space(theme::SPACE_SM);
+                    draw_run_output(ui, run);
+                }
+            });
+        if let Some(operation) = clicked {
+            self.on_operation_clicked(operation);
         }
     }
 
-    fn draw_operation_card(&mut self, ui: &mut egui::Ui, operation: &Operation) {
-        egui::Frame::new()
-            .fill(theme::SURFACE)
-            .stroke(egui::Stroke::new(1.0, theme::BORDER))
-            .corner_radius(theme::RADIUS_MD)
-            .inner_margin(12)
-            .show(ui, |ui| {
-                ui.label(
-                    RichText::new(operation.label)
-                        .family(theme::bold())
-                        .size(theme::FONT_BODY),
-                );
-                ui.add_space(theme::SPACE_XS);
-                ui.label(RichText::new(operation.description).color(theme::MUTED));
-                ui.add_space(theme::SPACE_XS);
-                ui.label(RichText::new(operation.duration_hint).color(theme::MUTED));
-                if !operation.cancelable {
-                    ui.label(
-                        RichText::new("Cannot be cancelled once started.").color(theme::WARNING),
-                    );
-                }
-                ui.add_space(theme::SPACE_SM);
-                let running = self.is_running();
-                if ui.add_enabled(!running, egui::Button::new("Run")).clicked() {
-                    self.confirm = Some(operation.clone());
-                }
-            });
-    }
-
-    fn draw_run_output(&mut self, ui: &mut egui::Ui) {
-        let Some(run) = &self.run else {
-            return;
-        };
-        ui.label(RichText::new(run.label).family(theme::bold()));
-        ui.add_space(theme::SPACE_XS);
-        let (text, color) = status_text(&run.status);
-        ui.label(RichText::new(text).color(color));
-        ui.add_space(theme::SPACE_SM);
-        let running = matches!(run.status, RunStatus::Running);
-        egui::ScrollArea::vertical()
-            .max_height(320.0)
-            .auto_shrink([false, false])
-            .stick_to_bottom(running)
-            .show(ui, |ui| {
-                ui.style_mut().interaction.selectable_labels = true;
-                for line in &run.lines {
-                    ui.monospace(line);
-                }
-            });
-    }
-
-    fn draw_about(&mut self, ui: &mut egui::Ui) {
+    fn draw_about(&self, ui: &mut egui::Ui) {
         ui.heading(toolkit_core::APP_TITLE);
         ui.add_space(theme::SPACE_SM);
         ui.label(RichText::new(concat!("Version ", env!("CARGO_PKG_VERSION"))).color(theme::MUTED));
@@ -271,15 +269,23 @@ impl ToolkitApp {
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
-                ui.set_max_width(420.0);
+                ui.set_max_width(440.0);
                 ui.label(RichText::new(operation.label).family(theme::bold()));
                 ui.add_space(theme::SPACE_SM);
                 ui.label(operation.description);
                 ui.add_space(theme::SPACE_SM);
-                ui.label(RichText::new(operation.duration_hint).color(theme::MUTED));
-                if operation.elevation == toolkit_core::Elevation::Administrator {
+                if !operation.duration_hint.is_empty() {
+                    ui.label(RichText::new(operation.duration_hint).color(theme::MUTED));
+                }
+                if operation.elevation == Elevation::Administrator {
                     ui.label(
                         RichText::new("This will request Administrator rights (a UAC prompt).")
+                            .color(theme::WARNING),
+                    );
+                }
+                if operation.is_capture() && !operation.cancelable {
+                    ui.label(
+                        RichText::new("This cannot be cancelled once started.")
                             .color(theme::WARNING),
                     );
                 }
@@ -302,6 +308,74 @@ impl ToolkitApp {
     }
 }
 
+/// Whether an operation should show a confirmation dialog before running:
+/// anything elevated or with more-than-low consequences.
+fn needs_confirmation(operation: &Operation) -> bool {
+    operation.elevation == Elevation::Administrator
+        || matches!(operation.risk, Risk::Medium | Risk::High)
+}
+
+/// Draws one operation as a card and returns whether its action was clicked.
+fn operation_card(ui: &mut egui::Ui, operation: &Operation, running: bool) -> bool {
+    let mut clicked = false;
+    egui::Frame::new()
+        .fill(theme::SURFACE)
+        .stroke(egui::Stroke::new(1.0, theme::BORDER))
+        .corner_radius(theme::RADIUS_MD)
+        .inner_margin(12)
+        .show(ui, |ui| {
+            ui.label(
+                RichText::new(operation.label)
+                    .family(theme::bold())
+                    .size(theme::FONT_BODY),
+            );
+            ui.add_space(theme::SPACE_XS);
+            ui.label(RichText::new(operation.description).color(theme::MUTED));
+            if !operation.duration_hint.is_empty() {
+                ui.add_space(theme::SPACE_XS);
+                ui.label(RichText::new(operation.duration_hint).color(theme::MUTED));
+            }
+            if operation.elevation == Elevation::Administrator {
+                ui.label(RichText::new("Requires Administrator").color(theme::WARNING));
+            }
+            ui.add_space(theme::SPACE_SM);
+            let action = if operation.is_capture() {
+                "Run"
+            } else {
+                "Open"
+            };
+            if ui
+                .add_enabled(!running, egui::Button::new(action))
+                .clicked()
+            {
+                clicked = true;
+            }
+        });
+    clicked
+}
+
+fn draw_run_output(ui: &mut egui::Ui, run: &RunView) {
+    ui.label(RichText::new(run.label).family(theme::bold()));
+    ui.add_space(theme::SPACE_XS);
+    let (text, color) = status_text(&run.status);
+    ui.label(RichText::new(text).color(color));
+    if run.is_capture {
+        ui.add_space(theme::SPACE_SM);
+        let running = matches!(run.status, RunStatus::Running);
+        egui::ScrollArea::vertical()
+            .id_salt("run-output")
+            .max_height(320.0)
+            .auto_shrink([false, false])
+            .stick_to_bottom(running)
+            .show(ui, |ui| {
+                ui.style_mut().interaction.selectable_labels = true;
+                for line in &run.lines {
+                    ui.monospace(line);
+                }
+            });
+    }
+}
+
 fn status_text(status: &RunStatus) -> (String, egui::Color32) {
     match status {
         RunStatus::Running => ("Running…".to_owned(), theme::WARNING),
@@ -313,6 +387,81 @@ fn status_text(status: &RunStatus) -> (String, egui::Color32) {
         ),
         RunStatus::Error(message) => (format!("Could not run: {message}"), theme::DANGER),
     }
+}
+
+/// Builds the Diagnostics catalog, which mixes a captured report generator with
+/// launchers for built-in Windows tools and the app's own files.
+fn build_diagnostics(log_path: Option<&std::path::Path>) -> Vec<Operation> {
+    let mut ops = Vec::new();
+
+    if let Some(reports) = toolkit_platform::app_data_dir().map(|dir| dir.join("reports")) {
+        let _ = std::fs::create_dir_all(&reports);
+        let report_file = reports.join("battery-report.html");
+        ops.push(Operation {
+            id: "battery-report",
+            label: "Generate battery report",
+            description: "Runs powercfg to write a detailed battery health and usage report, then \
+                          use 'Open battery report' to view it.",
+            duration_hint: "",
+            risk: Risk::ReadOnly,
+            elevation: Elevation::None,
+            cancelable: false,
+            execution: toolkit_core::Execution::Capture(toolkit_core::CommandLine::program(
+                "powercfg",
+                &["/batteryreport", "/output", &report_file.to_string_lossy()],
+            )),
+        });
+        ops.push(launcher(
+            "open-battery-report",
+            "Open battery report",
+            "Opens the most recently generated battery report in your browser.",
+            report_file.to_string_lossy().into_owned(),
+            Vec::new(),
+        ));
+    }
+
+    ops.push(launcher(
+        "open-dxdiag",
+        "Open DirectX Diagnostic Tool",
+        "Opens dxdiag, which reports display, sound, and input device information.",
+        "dxdiag".to_owned(),
+        Vec::new(),
+    ));
+    ops.push(launcher(
+        "open-eventvwr",
+        "Open Event Viewer",
+        "Opens the Windows Event Viewer to inspect system and application logs.",
+        "eventvwr".to_owned(),
+        Vec::new(),
+    ));
+    ops.push(launcher(
+        "open-reliability",
+        "Open Reliability Monitor",
+        "Opens Reliability Monitor, a timeline of crashes and warnings.",
+        "perfmon".to_owned(),
+        vec!["/rel".to_owned()],
+    ));
+
+    let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_owned());
+    ops.push(launcher(
+        "open-cbs-log",
+        "Open servicing log (CBS.log)",
+        "Opens the component servicing log written by SFC and DISM.",
+        format!(r"{system_root}\Logs\CBS\CBS.log"),
+        Vec::new(),
+    ));
+
+    if let Some(dir) = log_path.and_then(std::path::Path::parent) {
+        ops.push(launcher(
+            "open-logs",
+            "Open logs folder",
+            "Opens the folder containing this app's diagnostics logs.",
+            dir.to_string_lossy().into_owned(),
+            Vec::new(),
+        ));
+    }
+
+    ops
 }
 
 impl eframe::App for ToolkitApp {
