@@ -1,0 +1,10 @@
+[package]
+name = "toolkit-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Portable domain types for win-toolkit: the operation model shared by the UI and platform layers"
+
+[lints]
+workspace = true

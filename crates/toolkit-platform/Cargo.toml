@@ -1,0 +1,20 @@
+[package]
+name = "toolkit-platform"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Windows platform integration for win-toolkit: known folders, app-data paths, and privileged execution"
+
+[lints]
+workspace = true
+
+[dependencies]
+toolkit-core = { version = "=0.1.0", path = "../toolkit-core" }
+
+[target."cfg(windows)".dependencies]
+windows = { version = "=0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_UI_Shell",
+    "Win32_System_Com",
+] }

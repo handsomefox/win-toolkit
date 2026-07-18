@@ -1,0 +1,49 @@
+[workspace]
+members = [
+    "crates/toolkit-core",
+    "crates/toolkit-platform",
+    "crates/toolkit-app",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/handsomefox/win-toolkit"
+description = "A Windows desktop app for system inspection, diagnostics, and documented maintenance"
+
+[workspace.dependencies]
+crossbeam-channel = "=0.5.16"
+eframe = { version = "=0.35.0", default-features = false, features = ["default_fonts", "glow", "persistence", "x11"] }
+egui_extras = { version = "=0.35.0", features = ["image"] }
+image = { version = "=0.25.10", default-features = false, features = ["png"] }
+jiff = { version = "=0.2.32", features = ["serde"] }
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.150"
+tempfile = "=3.27.0"
+thiserror = "=2.0.18"
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.23", features = ["env-filter"] }
+
+[profile.release]
+lto = "thin"
+strip = true
+
+[workspace.lints.rust]
+unreachable_pub = "warn"
+unsafe_op_in_unsafe_fn = "warn"
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+dbg_macro = "warn"
+exit = "warn"
+multiple_unsafe_ops_per_block = "warn"
+print_stderr = "warn"
+print_stdout = "warn"
+todo = "warn"
+undocumented_unsafe_blocks = "warn"
+unimplemented = "warn"
