@@ -6,6 +6,12 @@
 //! can run. It builds and tests on any platform so the bulk of the logic can be
 //! developed and checked on Linux.
 
+pub mod command;
+pub mod operation;
+
+pub use command::{CommandSpec, console_lines, decode_console_output, elevated_cmd_parameters};
+pub use operation::{Operation, sfc_scannow};
+
 /// The short, filesystem-safe application slug. Used for the app-data directory
 /// (`%LOCALAPPDATA%\win-toolkit`) and log file names.
 pub const APP_SLUG: &str = "win-toolkit";

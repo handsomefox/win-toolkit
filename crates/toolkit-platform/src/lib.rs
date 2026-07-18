@@ -4,8 +4,10 @@
 //! platforms the Windows-specific pieces compile to stubs (or fall back to
 //! environment variables) so the workspace builds and tests run on Linux.
 
+pub mod exec;
 #[cfg(windows)]
 mod known_folders;
 pub mod paths;
 
-pub use paths::{app_data_dir, logs_dir};
+pub use exec::{ElevatedChild, ExecError, run_elevated};
+pub use paths::{app_data_dir, logs_dir, runs_dir};

@@ -46,14 +46,25 @@ pub fn logs_dir() -> Option<PathBuf> {
     app_data_dir().map(|dir| dir.join("logs"))
 }
 
+/// Directory the captured output of elevated child processes is written to.
+///
+/// This lives under the app-data directory rather than the system temp dir so a
+/// high-integrity elevated child can write it while the medium-integrity GUI
+/// reads it back.
+#[must_use]
+pub fn runs_dir() -> Option<PathBuf> {
+    app_data_dir().map(|dir| dir.join("runs"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn logs_dir_nests_under_the_app_data_dir() {
+    fn subdirs_nest_under_the_app_data_dir() {
         if let Some(app_dir) = app_data_dir() {
             assert_eq!(logs_dir(), Some(app_dir.join("logs")));
+            assert_eq!(runs_dir(), Some(app_dir.join("runs")));
         }
     }
 }

@@ -8,6 +8,7 @@
 mod app;
 mod diagnostics;
 mod theme;
+mod worker;
 
 use eframe::egui;
 
@@ -29,7 +30,7 @@ fn main() -> eframe::Result {
     eframe::run_native(
         toolkit_core::APP_TITLE,
         options,
-        Box::new(|cc| Ok(Box::new(app::ToolkitApp::new(cc)))),
+        Box::new(move |cc| Ok(Box::new(app::ToolkitApp::new(cc, log_path)))),
     )
 }
 

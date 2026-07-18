@@ -11,10 +11,14 @@ workspace = true
 
 [dependencies]
 toolkit-core = { version = "=0.1.0", path = "../toolkit-core" }
+thiserror.workspace = true
 
 [target."cfg(windows)".dependencies]
 windows = { version = "=0.62.2", features = [
     "Win32_Foundation",
     "Win32_UI_Shell",
     "Win32_System_Com",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
 ] }

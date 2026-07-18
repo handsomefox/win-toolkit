@@ -16,10 +16,17 @@ pub(crate) const SELECTION: Color32 = Color32::from_rgba_premultiplied(0x21, 0x2
 pub(crate) const ROW_ALT: Color32 = Color32::from_rgba_premultiplied(0x0c, 0x0c, 0x0c, 0x0c);
 pub(crate) const TEXT: Color32 = Color32::from_rgb(0xe6, 0xe9, 0xef);
 pub(crate) const MUTED: Color32 = Color32::from_rgb(0x8b, 0x93, 0xa3);
+pub(crate) const DANGER: Color32 = Color32::from_rgb(0xff, 0x5c, 0x5c);
+pub(crate) const SUCCESS: Color32 = Color32::from_rgb(0x5c, 0xd6, 0x8c);
+pub(crate) const WARNING: Color32 = Color32::from_rgb(0xe8, 0xb5, 0x4d);
 
 // Spacing tokens (f32 — for `add_space` and `vec2`).
+pub(crate) const SPACE_XS: f32 = 4.0;
 pub(crate) const SPACE_SM: f32 = 8.0;
 pub(crate) const SPACE_MD: f32 = 12.0;
+
+// Layout metrics (f32).
+pub(crate) const SIDEBAR_WIDTH: f32 = 220.0;
 
 // Corner radii (u8 — feed `CornerRadius::same` / `Frame::corner_radius`).
 pub(crate) const RADIUS_SM: u8 = 6;

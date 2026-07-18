@@ -16,6 +16,7 @@ path = "src/main.rs"
 [dependencies]
 toolkit-core = { version = "=0.1.0", path = "../toolkit-core" }
 toolkit-platform = { version = "=0.1.0", path = "../toolkit-platform" }
+crossbeam-channel.workspace = true
 eframe.workspace = true
 egui_extras.workspace = true
 image.workspace = true
