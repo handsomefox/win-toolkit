@@ -8,6 +8,8 @@
 
 pub mod command;
 pub mod operation;
+pub mod sandbox;
+pub mod startup;
 pub mod sysinfo;
 
 pub use command::{
@@ -17,6 +19,8 @@ pub use command::{
 pub use operation::{
     Execution, Operation, health_operations, launcher, network_operations, performance_operations,
 };
+pub use sandbox::SandboxConfig;
+pub use startup::{StartupEntry, StartupScope};
 pub use sysinfo::{DriveInfo, SystemInfo, format_bytes, format_uptime};
 
 /// The short, filesystem-safe application slug. Used for the app-data directory

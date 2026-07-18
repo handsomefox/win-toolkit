@@ -5,8 +5,8 @@ use std::path::PathBuf;
 
 use eframe::egui::{self, RichText};
 use toolkit_core::{
-    Elevation, Operation, Risk, SystemInfo, format_bytes, health_operations, launcher,
-    network_operations, performance_operations,
+    Elevation, Operation, Risk, SandboxConfig, StartupEntry, StartupScope, SystemInfo,
+    format_bytes, health_operations, launcher, network_operations, performance_operations,
 };
 
 use crate::theme;
@@ -74,6 +74,8 @@ pub(crate) struct ToolkitApp {
     confirm: Option<Operation>,
     log_path: Option<PathBuf>,
     overview: Option<SystemInfo>,
+    sandbox: SandboxConfig,
+    startup: Option<Vec<StartupEntry>>,
     health: Vec<Operation>,
     network: Vec<Operation>,
     performance: Vec<Operation>,
@@ -90,6 +92,8 @@ impl ToolkitApp {
             run: None,
             confirm: None,
             overview: None,
+            sandbox: SandboxConfig::default(),
+            startup: None,
             diagnostics: build_diagnostics(log_path.as_deref()),
             log_path,
             health: health_operations(),
@@ -204,8 +208,9 @@ impl ToolkitApp {
                     let ops = self.diagnostics.clone();
                     self.draw_operation_section(ui, "Diagnostics", &ops);
                 }
+                Section::Sandbox => self.draw_sandbox(ui),
+                Section::Startup => self.draw_startup(ui),
                 Section::About => self.draw_about(ui),
-                other => Self::draw_placeholder(ui, other),
             });
     }
 
@@ -276,10 +281,121 @@ impl ToolkitApp {
         }
     }
 
-    fn draw_placeholder(ui: &mut egui::Ui, section: Section) {
-        ui.heading(section.label());
+    fn draw_sandbox(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Windows Sandbox");
         ui.add_space(theme::SPACE_MD);
-        ui.label(RichText::new("Coming in a later version.").color(theme::MUTED));
+        let available = sandbox_available();
+        if !available {
+            ui.label(
+                RichText::new(
+                    "Windows Sandbox is not installed. Enable the 'Windows Sandbox' optional \
+                     feature (Windows Pro or Enterprise) to use this.",
+                )
+                .color(theme::WARNING),
+            );
+            ui.add_space(theme::SPACE_SM);
+        }
+        ui.label(
+            RichText::new("Build a disposable, isolated Windows environment.").color(theme::MUTED),
+        );
+        ui.add_space(theme::SPACE_MD);
+
+        let mut memory_gb = (self.sandbox.memory_mb / 1024).max(1);
+        ui.horizontal(|ui| {
+            ui.add_sized(
+                [110.0, theme::FONT_BODY],
+                egui::Label::new(RichText::new("Memory").color(theme::MUTED)),
+            );
+            ui.add(egui::Slider::new(&mut memory_gb, 1..=16).suffix(" GB"));
+        });
+        self.sandbox.memory_mb = memory_gb * 1024;
+        ui.checkbox(&mut self.sandbox.vgpu, "Virtual GPU (vGPU)");
+        ui.checkbox(&mut self.sandbox.networking, "Networking");
+        ui.add_space(theme::SPACE_MD);
+
+        let launch = ui
+            .add_enabled(
+                available && !self.is_running(),
+                egui::Button::new("Launch sandbox"),
+            )
+            .clicked();
+        if launch {
+            self.launch_sandbox();
+        }
+
+        if let Some(run) = &self.run {
+            ui.add_space(theme::SPACE_MD);
+            ui.separator();
+            ui.add_space(theme::SPACE_SM);
+            draw_run_output(ui, run);
+        }
+    }
+
+    fn launch_sandbox(&mut self) {
+        match write_sandbox_config(self.sandbox) {
+            Ok(path) => self.start(launcher(
+                "launch-sandbox",
+                "Windows Sandbox",
+                "Launches Windows Sandbox with the selected configuration.",
+                path,
+                Vec::new(),
+            )),
+            Err(message) => {
+                self.run = Some(RunView {
+                    label: "Windows Sandbox",
+                    is_capture: false,
+                    status: RunStatus::Error(message),
+                    lines: Vec::new(),
+                });
+            }
+        }
+    }
+
+    fn draw_startup(&mut self, ui: &mut egui::Ui) {
+        if self.startup.is_none() {
+            self.startup = Some(toolkit_platform::list_startup());
+        }
+        let entries = self.startup.clone().unwrap_or_default();
+        let mut refresh = false;
+        let mut toggle: Option<(StartupScope, String, bool)> = None;
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.heading("Startup");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Refresh").clicked() {
+                            refresh = true;
+                        }
+                    });
+                });
+                ui.add_space(theme::SPACE_MD);
+                if entries.is_empty() {
+                    ui.label(RichText::new("No startup entries found.").color(theme::MUTED));
+                }
+                for entry in &entries {
+                    if let Some(change) = startup_card(ui, entry) {
+                        toggle = Some((entry.scope, entry.name.clone(), change));
+                    }
+                    ui.add_space(theme::SPACE_SM);
+                }
+            });
+        if refresh {
+            self.startup = Some(toolkit_platform::list_startup());
+        }
+        if let Some((scope, name, enabled)) = toggle {
+            match toolkit_platform::set_startup_enabled(scope, &name, enabled) {
+                Ok(()) => self.startup = Some(toolkit_platform::list_startup()),
+                Err(message) => {
+                    self.run = Some(RunView {
+                        label: "Startup",
+                        is_capture: false,
+                        status: RunStatus::Error(message),
+                        lines: Vec::new(),
+                    });
+                }
+            }
+        }
     }
 
     fn draw_operation_section(&mut self, ui: &mut egui::Ui, title: &str, ops: &[Operation]) {
@@ -376,6 +492,61 @@ impl ToolkitApp {
             self.confirm = None;
         }
     }
+}
+
+/// Draws one startup entry as a card. Returns the requested new enabled state if
+/// the user toggled it.
+fn startup_card(ui: &mut egui::Ui, entry: &StartupEntry) -> Option<bool> {
+    let mut toggled = None;
+    egui::Frame::new()
+        .fill(theme::SURFACE)
+        .stroke(egui::Stroke::new(1.0, theme::BORDER))
+        .corner_radius(theme::RADIUS_MD)
+        .inner_margin(12)
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.label(RichText::new(&entry.name).family(theme::bold()));
+                    ui.label(RichText::new(&entry.command).color(theme::MUTED));
+                    ui.label(RichText::new(entry.scope.label()).color(theme::MUTED));
+                    if !entry.can_toggle {
+                        ui.label(
+                            RichText::new("System-wide; requires Administrator to change")
+                                .color(theme::MUTED),
+                        );
+                    }
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let mut enabled = entry.enabled;
+                    if ui
+                        .add_enabled(
+                            entry.can_toggle,
+                            egui::Checkbox::new(&mut enabled, "Enabled"),
+                        )
+                        .changed()
+                    {
+                        toggled = Some(enabled);
+                    }
+                });
+            });
+        });
+    toggled
+}
+
+/// Whether the Windows Sandbox optional feature appears to be installed.
+fn sandbox_available() -> bool {
+    let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_owned());
+    std::path::Path::new(&format!(r"{system_root}\System32\WindowsSandbox.exe")).exists()
+}
+
+/// Writes the sandbox configuration to a `.wsb` file and returns its path.
+fn write_sandbox_config(config: SandboxConfig) -> Result<String, String> {
+    let dir = toolkit_platform::sandbox_dir()
+        .ok_or_else(|| "could not resolve the sandbox directory".to_owned())?;
+    std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+    let path = dir.join("session.wsb");
+    std::fs::write(&path, config.to_wsb()).map_err(|err| err.to_string())?;
+    Ok(path.to_string_lossy().into_owned())
 }
 
 /// Draws a labelled read-only field: a fixed-width muted label and its value.

@@ -56,6 +56,12 @@ pub fn runs_dir() -> Option<PathBuf> {
     app_data_dir().map(|dir| dir.join("runs"))
 }
 
+/// Directory generated Windows Sandbox (`.wsb`) configurations are written to.
+#[must_use]
+pub fn sandbox_dir() -> Option<PathBuf> {
+    app_data_dir().map(|dir| dir.join("sandbox"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
