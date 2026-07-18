@@ -383,10 +383,10 @@ pub fn performance_operations() -> Vec<Operation> {
             id: "mmagent-status",
             label: "Show memory compression state",
             description: "Reports whether Windows memory compression is currently enabled. \
-                          Read-only.",
+                          Read-only, but Get-MMAgent requires Administrator rights.",
             duration_hint: "",
             risk: Risk::ReadOnly,
-            elevation: Elevation::None,
+            elevation: Elevation::Administrator,
             cancelable: false,
             execution: Execution::Capture(CommandLine::program(
                 "powershell",

@@ -2665,7 +2665,7 @@ checksum = "7d56353a2a665ad0f41a421187180aab746c8c325620617ad883a99a1cbe66d2"
 
 [[package]]
 name = "toolkit-app"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "crossbeam-channel",
  "eframe",
@@ -2682,11 +2682,11 @@ dependencies = [
 
 [[package]]
 name = "toolkit-core"
-version = "0.2.0"
+version = "0.2.1"
 
 [[package]]
 name = "toolkit-platform"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "thiserror 2.0.18",
  "toolkit-core",

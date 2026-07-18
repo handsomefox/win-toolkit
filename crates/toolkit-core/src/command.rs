@@ -150,6 +150,11 @@ pub fn console_lines(bytes: &[u8]) -> Vec<String> {
     decode_console_output(bytes)
         .split('\n')
         .map(|line| {
+            // Drop the CR from a CRLF line ending first; otherwise the split
+            // below would keep the empty segment after that trailing `\r` and
+            // wipe the line. Any remaining internal `\r` are progress
+            // overwrites, so keep the final segment.
+            let line = line.strip_suffix('\r').unwrap_or(line);
             let latest = line.rsplit('\r').next().unwrap_or(line);
             latest.trim_end().to_owned()
         })
@@ -271,6 +276,19 @@ mod tests {
                 "Done.".to_owned(),
                 String::new(),
             ]
+        );
+    }
+
+    #[test]
+    fn console_lines_keep_crlf_terminated_content() {
+        // Regression: CRLF line endings must not be wiped by the CR-collapse.
+        assert_eq!(
+            console_lines(b"True\r\n"),
+            vec!["True".to_owned(), String::new()]
+        );
+        assert_eq!(
+            console_lines(b"Line one\r\nLine two\r\n"),
+            vec!["Line one".to_owned(), "Line two".to_owned(), String::new()]
         );
     }
 }
