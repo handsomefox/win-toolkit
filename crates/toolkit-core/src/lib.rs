@@ -8,6 +8,7 @@
 
 pub mod command;
 pub mod operation;
+pub mod sysinfo;
 
 pub use command::{
     CommandLine, CommandSpec, compact_lines, console_lines, decode_console_output,
@@ -16,6 +17,7 @@ pub use command::{
 pub use operation::{
     Execution, Operation, health_operations, launcher, network_operations, performance_operations,
 };
+pub use sysinfo::{DriveInfo, SystemInfo, format_bytes, format_uptime};
 
 /// The short, filesystem-safe application slug. Used for the app-data directory
 /// (`%LOCALAPPDATA%\win-toolkit`) and log file names.

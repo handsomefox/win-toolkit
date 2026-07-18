@@ -5,8 +5,8 @@ use std::path::PathBuf;
 
 use eframe::egui::{self, RichText};
 use toolkit_core::{
-    Elevation, Operation, Risk, health_operations, launcher, network_operations,
-    performance_operations,
+    Elevation, Operation, Risk, SystemInfo, format_bytes, health_operations, launcher,
+    network_operations, performance_operations,
 };
 
 use crate::theme;
@@ -73,6 +73,7 @@ pub(crate) struct ToolkitApp {
     run: Option<RunView>,
     confirm: Option<Operation>,
     log_path: Option<PathBuf>,
+    overview: Option<SystemInfo>,
     health: Vec<Operation>,
     network: Vec<Operation>,
     performance: Vec<Operation>,
@@ -88,6 +89,7 @@ impl ToolkitApp {
             section: Section::Health,
             run: None,
             confirm: None,
+            overview: None,
             diagnostics: build_diagnostics(log_path.as_deref()),
             log_path,
             health: health_operations(),
@@ -185,6 +187,7 @@ impl ToolkitApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(theme::BACKGROUND).inner_margin(16))
             .show(root, |ui| match self.section {
+                Section::Overview => self.draw_overview(ui),
                 Section::Health => {
                     let ops = self.health.clone();
                     self.draw_operation_section(ui, "Health & Repair", &ops);
@@ -204,6 +207,73 @@ impl ToolkitApp {
                 Section::About => self.draw_about(ui),
                 other => Self::draw_placeholder(ui, other),
             });
+    }
+
+    fn draw_overview(&mut self, ui: &mut egui::Ui) {
+        if self.overview.is_none() {
+            self.overview = Some(toolkit_platform::system_info());
+        }
+        let Some(info) = self.overview.clone() else {
+            return;
+        };
+        let mut refresh = false;
+        let mut copy = false;
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.heading("Overview");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Copy report").clicked() {
+                            copy = true;
+                        }
+                        if ui.button("Refresh").clicked() {
+                            refresh = true;
+                        }
+                    });
+                });
+                ui.add_space(theme::SPACE_MD);
+                info_row(
+                    ui,
+                    "OS",
+                    &format!("{} (build {})", info.os_name, info.os_build),
+                );
+                info_row(ui, "Machine", &info.computer_name);
+                info_row(ui, "Uptime", &info.uptime);
+                info_row(
+                    ui,
+                    "CPU",
+                    &format!("{} ({} logical)", info.cpu, info.logical_cpus),
+                );
+                info_row(
+                    ui,
+                    "Memory",
+                    &format!(
+                        "{} free of {}",
+                        format_bytes(info.available_memory),
+                        format_bytes(info.total_memory)
+                    ),
+                );
+                ui.add_space(theme::SPACE_SM);
+                ui.label(RichText::new("Drives").family(theme::bold()));
+                for drive in &info.drives {
+                    info_row(
+                        ui,
+                        &drive.name,
+                        &format!(
+                            "{} free of {}",
+                            format_bytes(drive.free),
+                            format_bytes(drive.total)
+                        ),
+                    );
+                }
+            });
+        if refresh {
+            self.overview = Some(toolkit_platform::system_info());
+        }
+        if copy {
+            ui.ctx().copy_text(info.to_report());
+        }
     }
 
     fn draw_placeholder(ui: &mut egui::Ui, section: Section) {
@@ -306,6 +376,17 @@ impl ToolkitApp {
             self.confirm = None;
         }
     }
+}
+
+/// Draws a labelled read-only field: a fixed-width muted label and its value.
+fn info_row(ui: &mut egui::Ui, label: &str, value: &str) {
+    ui.horizontal(|ui| {
+        ui.add_sized(
+            [110.0, theme::FONT_BODY],
+            egui::Label::new(RichText::new(label).color(theme::MUTED)),
+        );
+        ui.label(value);
+    });
 }
 
 /// Whether an operation should show a confirmation dialog before running:
