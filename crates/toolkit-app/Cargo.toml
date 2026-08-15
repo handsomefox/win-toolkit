@@ -14,8 +14,8 @@ name = "win-toolkit"
 path = "src/main.rs"
 
 [dependencies]
-toolkit-core = { version = "=0.2.1", path = "../toolkit-core" }
-toolkit-platform = { version = "=0.2.1", path = "../toolkit-platform" }
+toolkit-core = { version = "=0.2.2", path = "../toolkit-core" }
+toolkit-platform = { version = "=0.2.2", path = "../toolkit-platform" }
 crossbeam-channel.workspace = true
 eframe.workspace = true
 egui_extras.workspace = true
