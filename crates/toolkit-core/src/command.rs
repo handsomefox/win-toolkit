@@ -81,7 +81,9 @@ fn quote_if_needed(token: &str) -> Cow<'_, str> {
 /// Builds the `lpParameters` string for launching `command` through `cmd.exe`,
 /// redirecting both stdout and stderr to `output_path`.
 ///
-/// The result is `/c "<command> > "<output_path>" 2>&1"`. `cmd.exe`'s `/c` quote
+/// The result is `/d /c "<command> > "<output_path>" 2>&1"`. `/d` disables
+/// Command Processor AutoRun registry commands in the elevated process.
+/// `cmd.exe`'s `/c` quote
 /// handling strips the outer quote pair (there are more than two quotes and a
 /// redirection operator between them), leaving the inner command line intact —
 /// including the quoted output path, which is essential because it lives under a
@@ -90,7 +92,7 @@ fn quote_if_needed(token: &str) -> Cow<'_, str> {
 pub fn elevated_cmd_parameters(command: &CommandLine, output_path: &str) -> String {
     // The output path is always quoted: it is a filesystem path that routinely
     // contains spaces.
-    format!(r#"/c "{} > "{output_path}" 2>&1""#, command.render())
+    format!(r#"/d /c "{} > "{output_path}" 2>&1""#, command.render())
 }
 
 /// Decodes bytes captured from a redirected console into a `String`.
@@ -199,7 +201,7 @@ mod tests {
         );
         assert_eq!(
             params,
-            r#"/c "sfc /scannow > "C:\Users\John Doe\AppData\Local\win-toolkit\runs\sfc.log" 2>&1""#
+            r#"/d /c "sfc /scannow > "C:\Users\John Doe\AppData\Local\win-toolkit\runs\sfc.log" 2>&1""#
         );
     }
 
@@ -210,7 +212,7 @@ mod tests {
         let params = elevated_cmd_parameters(&command, r"C:\out.log");
         assert_eq!(
             params,
-            r#"/c "schtasks.exe /Run /TN \Microsoft\Windows\x > "C:\out.log" 2>&1""#
+            r#"/d /c "schtasks.exe /Run /TN \Microsoft\Windows\x > "C:\out.log" 2>&1""#
         );
     }
 
@@ -220,7 +222,7 @@ mod tests {
         let params = elevated_cmd_parameters(&command, r"C:\out.log");
         assert_eq!(
             params,
-            r#"/c "net stop wuauserv & net start wuauserv > "C:\out.log" 2>&1""#
+            r#"/d /c "net stop wuauserv & net start wuauserv > "C:\out.log" 2>&1""#
         );
     }
 
