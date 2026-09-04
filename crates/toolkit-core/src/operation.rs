@@ -204,16 +204,39 @@ fn reset_windows_update() -> Operation {
         risk: Risk::Medium,
         elevation: Elevation::Administrator,
         cancelable: false,
-        execution: Execution::Capture(CommandLine::Script(
-            "net stop wuauserv & net stop bits & net stop cryptsvc & \
-             ren \"%SystemRoot%\\SoftwareDistribution\" SoftwareDistribution.old & \
-             ren \"%SystemRoot%\\System32\\catroot2\" catroot2.old & \
-             net start cryptsvc & net start bits & net start wuauserv & \
-             echo Done. If a folder could not be renamed, a reboot may be required first."
-                .to_owned(),
+        execution: Execution::Capture(CommandLine::program(
+            "powershell.exe",
+            &[
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                RESET_UPDATE_SCRIPT,
+            ],
         )),
     }
 }
+
+// Stop on reset failures, but always attempt to restart every service. Report
+// any restart failure as well, and preserve failure in the process exit code.
+const RESET_UPDATE_SCRIPT: &str = concat!(
+    "$failed = $false; ",
+    "$services = @('wuauserv', 'bits', 'cryptsvc'); ",
+    "try { ",
+    "foreach ($service in $services) { ",
+    "Write-Output ('Stopping ' + $service); ",
+    "Stop-Service -Name $service -ErrorAction Stop }; ",
+    "Rename-Item -LiteralPath ($env:SystemRoot + '\\SoftwareDistribution') ",
+    "-NewName 'SoftwareDistribution.old' -ErrorAction Stop; ",
+    "Rename-Item -LiteralPath ($env:SystemRoot + '\\System32\\catroot2') ",
+    "-NewName 'catroot2.old' -ErrorAction Stop; ",
+    "} catch { $failed = $true; Write-Output ('Reset failed: ' + $_.Exception.Message) } ",
+    "finally { foreach ($service in @('cryptsvc', 'bits', 'wuauserv')) { ",
+    "try { Write-Output ('Starting ' + $service); ",
+    "Start-Service -Name $service -ErrorAction Stop } ",
+    "catch { $failed = $true; Write-Output ('Restart failed: ' + $_.Exception.Message) } ",
+    "} }; ",
+    "if ($failed) { exit 1 }; Write-Output 'Windows Update reset completed.'; exit 0",
+);
 
 fn create_restore_point() -> Operation {
     Operation {
@@ -429,6 +452,57 @@ pub fn performance_operations() -> Vec<Operation> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    fn simulate_update_reset(rename_fails: bool, restart_fails: bool) -> std::process::Output {
+        // Override only the three mutating cmdlets. No services or files are changed.
+        let rename = if rename_fails {
+            "throw 'rename blocked'"
+        } else {
+            "'renamed'"
+        };
+        let restart = if restart_fails {
+            "throw 'restart blocked'"
+        } else {
+            "'restarted'"
+        };
+        let script = format!(
+            "function Stop-Service {{ 'stopped' }}; function Rename-Item {{ {rename} }}; \
+             function Start-Service {{ {restart} }}; {RESET_UPDATE_SCRIPT}"
+        );
+        std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .output()
+            .unwrap()
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn update_reset_reports_failure_and_attempts_every_restart() {
+        for (rename_fails, restart_fails) in [(true, false), (false, true)] {
+            let output = simulate_update_reset(rename_fails, restart_fails);
+            assert_eq!(output.status.code(), Some(1));
+            let text = String::from_utf8_lossy(&output.stdout);
+            assert_eq!(text.matches("Starting ").count(), 3);
+            assert!(!text.contains("reset completed"));
+            assert!(text.contains(if rename_fails {
+                "rename blocked"
+            } else {
+                "restart blocked"
+            }));
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn update_reset_reports_success_after_both_renames() {
+        let output = simulate_update_reset(false, false);
+        assert!(output.status.success());
+        let text = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(text.matches("renamed").count(), 2);
+        assert_eq!(text.matches("restarted").count(), 3);
+        assert!(text.contains("reset completed"));
+    }
 
     #[test]
     fn sfc_is_the_first_elevated_health_operation() {
