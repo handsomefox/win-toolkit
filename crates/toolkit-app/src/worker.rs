@@ -2,6 +2,7 @@
 //! captured output, talking to the UI over channels. The UI thread never blocks
 //! on a running operation.
 
+use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -62,7 +63,9 @@ impl Worker {
 /// is followed by a repaint request.
 pub(crate) fn spawn(ctx: egui::Context) -> Worker {
     let (command_tx, command_rx) = crossbeam_channel::unbounded::<Command>();
-    let (event_tx, event_rx) = crossbeam_channel::unbounded::<Event>();
+    // Bound retained output if the UI is stalled. Child output goes to disk,
+    // so backpressure here cannot fill a pipe and deadlock the child process.
+    let (event_tx, event_rx) = crossbeam_channel::bounded::<Event>(4);
 
     std::thread::Builder::new()
         .name("toolkit-worker".to_owned())
@@ -180,18 +183,19 @@ fn run_elevated_capture(operation: &Operation, command: &CommandLine, emit: &imp
 
     emit(Event::Started);
 
+    let mut tail = LogTail::default();
     loop {
         std::thread::sleep(POLL_INTERVAL);
-        emit(Event::Output {
-            lines: read_output(&output_path),
-        });
+        if let Some(lines) = tail.read(&output_path) {
+            emit(Event::Output { lines });
+        }
         match child.try_exit_code() {
             Ok(Some(code)) => {
                 // A final read captures anything written between the last poll
                 // and exit.
-                emit(Event::Output {
-                    lines: read_output(&output_path),
-                });
+                if let Some(lines) = tail.read(&output_path) {
+                    emit(Event::Output { lines });
+                }
                 tracing::info!(operation = operation.id, code, "operation finished");
                 emit(Event::Finished(if code == 0 {
                     Outcome::Success
@@ -215,10 +219,130 @@ fn output_path(operation_id: &str) -> Option<PathBuf> {
     toolkit_platform::runs_dir().map(|dir| dir.join(format!("{operation_id}-{stamp}.log")))
 }
 
-fn read_output(path: &std::path::Path) -> Vec<String> {
-    match std::fs::read(path) {
-        Ok(bytes) => compact_lines(&console_lines(&bytes)),
-        // The file may not exist yet for the first poll; treat as empty.
-        Err(_) => Vec::new(),
+const MAX_DISPLAY_BYTES: usize = 256 * 1024;
+
+#[derive(Default)]
+struct LogTail {
+    offset: u64,
+    bytes: Vec<u8>,
+    utf16: bool,
+    clipped: bool,
+}
+
+impl LogTail {
+    fn read(&mut self, path: &std::path::Path) -> Option<Vec<String>> {
+        self.read_file(path).ok().flatten()
+    }
+
+    fn read_file(&mut self, path: &std::path::Path) -> std::io::Result<Option<Vec<String>>> {
+        let mut file = std::fs::File::open(path)?;
+        let length = file.metadata()?.len();
+        if length == self.offset {
+            return Ok(None);
+        }
+        if length < self.offset {
+            *self = Self::default();
+        }
+        if self.offset < 64 {
+            let mut sample = [0_u8; 64];
+            let count = file.read(&mut sample)?;
+            self.utf16 = sample[..count].starts_with(&[0xff, 0xfe])
+                || (count >= 4
+                    && sample[..count]
+                        .iter()
+                        .skip(1)
+                        .step_by(2)
+                        .filter(|byte| **byte == 0)
+                        .count()
+                        * 2
+                        >= count / 2);
+        }
+        // Skip output older than the display window after a long pause. The
+        // complete log stays on disk; each read and event has a fixed size cap.
+        let mut start = self
+            .offset
+            .max(length.saturating_sub(MAX_DISPLAY_BYTES as u64));
+        if self.utf16 && start % 2 != 0 {
+            start += 1;
+        }
+        let end = if self.utf16 {
+            length - length % 2
+        } else {
+            length
+        };
+        if start > self.offset {
+            self.bytes.clear();
+            self.clipped = true;
+        }
+        file.seek(SeekFrom::Start(start))?;
+        let before = self.bytes.len();
+        file.take(end.saturating_sub(start))
+            .read_to_end(&mut self.bytes)?;
+        self.offset = start + (self.bytes.len() - before) as u64;
+        if self.bytes.len() > MAX_DISPLAY_BYTES {
+            let remove = self.bytes.len() - MAX_DISPLAY_BYTES;
+            self.bytes.drain(..remove);
+            self.clipped = true;
+        }
+        let mut decode = Vec::new();
+        let bytes = if self.utf16 && !self.bytes.starts_with(&[0xff, 0xfe]) {
+            decode.extend_from_slice(&[0xff, 0xfe]);
+            decode.extend_from_slice(&self.bytes);
+            &decode
+        } else {
+            &self.bytes
+        };
+        let mut lines = compact_lines(&console_lines(bytes));
+        if self.clipped {
+            lines.insert(
+                0,
+                "Earlier output omitted. The complete log is saved on disk.".into(),
+            );
+        }
+        Ok(Some(lines))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn tail_reads_changes_and_handles_truncation() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        let mut tail = LogTail::default();
+        file.write_all(b"first\n10%").unwrap();
+        assert_eq!(tail.read(file.path()).unwrap(), ["first", "10%"]);
+        assert!(tail.read(file.path()).is_none());
+        file.write_all(b"\r20%\n").unwrap();
+        assert_eq!(tail.read(file.path()).unwrap(), ["first", "20%"]);
+        std::fs::write(file.path(), b"new").unwrap();
+        assert_eq!(tail.read(file.path()).unwrap(), ["new"]);
+    }
+
+    #[test]
+    fn tail_bounds_large_logs_and_preserves_utf16() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(&[0xff, 0xfe]).unwrap();
+        for _ in 0..MAX_DISPLAY_BYTES {
+            file.write_all(&[b'a', 0]).unwrap();
+        }
+        let mut tail = LogTail::default();
+        let lines = tail.read(file.path()).unwrap();
+        assert!(tail.bytes.len() <= MAX_DISPLAY_BYTES);
+        assert!(tail.clipped);
+        assert!(lines.last().unwrap().chars().all(|ch| ch == 'a'));
+        assert!(tail.read(file.path()).is_none());
+        file.write_all(b"b").unwrap();
+        tail.read(file.path());
+        file.write_all(&[0]).unwrap();
+        assert!(
+            tail.read(file.path())
+                .unwrap()
+                .last()
+                .unwrap()
+                .ends_with('b')
+        );
     }
 }
