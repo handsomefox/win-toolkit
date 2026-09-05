@@ -1,5 +1,0 @@
-# Security-sensitive automation and privileged execution require maintainer review.
-/.github/workflows/ @handsomefox
-/scripts/ @handsomefox
-/crates/toolkit-platform/src/elevate.rs @handsomefox
-/crates/toolkit-platform/src/process.rs @handsomefox
