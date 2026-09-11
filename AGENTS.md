@@ -29,3 +29,13 @@ Before a privileged operation runs, the confirmation dialog states what it does,
 Unit tests live beside their implementations in `#[cfg(test)]` modules. Because operations are plain data, the command line an operation builds is testable off Windows. Cover that, and cover the rejection path for anything that parses output or resolves a path.
 
 CI cannot reach the elevation flow. Exercise it by hand on Windows, along with output capture, cancellation, and any operation that changes system state.
+
+## Bump CI tool pins by hand
+
+`scripts/install-ci-tool.sh` downloads cargo-audit, cargo-machete, actionlint, and zizmor from their release pages and checks each archive against a pinned SHA-256 before it extracts anything. Dependabot cannot bump these pins. To bump one, change its row in the script and take the new hash from the digest GitHub records for the asset:
+
+```sh
+gh release view <tag> -R <owner>/<repo> --json assets --jq '.assets[] | select(.name == "<asset>") | .digest'
+```
+
+CI runs actionlint, shellcheck, and `zizmor --persona pedantic` on every push. Run all three before you push a workflow change.
