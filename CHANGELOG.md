@@ -2,6 +2,11 @@
 
 Releases before 0.2.4 are listed on the [releases page](https://github.com/handsomefox/win-toolkit/releases).
 
+## 0.3.0
+
+- Update egui from 0.35 to 0.36, along with smaller dependencies.
+- Build with Rust 1.98.1.
+
 ## 0.2.4
 
 - Ship `win-toolkit-<version>-windows-x86_64.zip`, which holds a folder of the same name with
