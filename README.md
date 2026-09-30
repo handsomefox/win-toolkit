@@ -33,6 +33,12 @@ Before a privileged operation runs, the app shows what it does, roughly how long
 
 The long repair operations, `sfc` and `DISM`, are not cancelable, because interrupting them mid-run can leave the component store inconsistent. Their output streams to the log view and to the diagnostics log as it arrives.
 
+## Install
+
+Download the latest release from the [releases page](https://github.com/handsomefox/win-toolkit/releases). Unpack `win-toolkit-<version>-windows-x86_64.zip` and run `win-toolkit.exe` from the folder inside it. `SHA256SUMS` beside the archive holds its checksum.
+
+The app runs on Windows 10 and 11, x86-64.
+
 ## Diagnostics
 
 The app writes logs to `%LOCALAPPDATA%\win-toolkit\logs\`. If something fails, attach the newest log file to your issue.
