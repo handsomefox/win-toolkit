@@ -9,6 +9,8 @@ A Windows desktop app that inspects your system and runs documented Windows main
 
 The app has seven sections.
 
+![The Health & Repair section, listing System File Checker, DISM Restore Health, and chkdsk](docs/health.png)
+
 **Overview.** A read-only summary of the system and hardware: OS build, uptime, CPU, memory, and free space per drive. You can export it as text for a support request.
 
 **Health & Repair.** `sfc /scannow`, `DISM /RestoreHealth`, `chkdsk C: /scan`, analysis and cleanup of the WinSxS component store, Reset Windows Update, and Create a System Restore point. Each is a separate action with its own description and confirmation.
@@ -31,6 +33,8 @@ Every operation wraps a documented, built-in Windows command or API. There are n
 
 Before a privileged operation runs, the app shows what it does, roughly how long it takes, and what it costs you. A network reset needs a reboot afterward, for example, and Reset Windows Update renames the servicing folders rather than deleting them.
 
+![The confirmation for System File Checker, warning that it asks for administrator rights and cannot be cancelled](docs/confirm.png)
+
 The long repair operations, `sfc` and `DISM`, are not cancelable, because interrupting them mid-run can leave the component store inconsistent. Their output streams to the log view and to the diagnostics log as it arrives.
 
 ## Install
@@ -46,6 +50,8 @@ The app writes logs to `%LOCALAPPDATA%\win-toolkit\logs\`. If something fails, a
 ## Development
 
 The portable logic builds and tests on any OS, including Linux. The GUI runs there too, but the maintenance and diagnostic operations call Windows commands and only work on Windows.
+
+The pictures above come from `cargo run -p toolkit-app` on Linux. Operations are plain data, so their descriptions and confirmations look the same there. The Overview section does not, because it reads the system from Windows APIs.
 
 ```sh
 cargo fmt --all -- --check
