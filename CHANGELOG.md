@@ -2,6 +2,10 @@
 
 Releases before 0.2.4 are listed on the [releases page](https://github.com/handsomefox/win-toolkit/releases).
 
+## 0.3.1
+
+- Fix the repository link in the About section, which did not open.
+
 ## 0.3.0
 
 - Update egui from 0.35 to 0.36, along with smaller dependencies.
