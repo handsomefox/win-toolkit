@@ -2,6 +2,10 @@
 
 Releases before 0.2.4 are listed on the [releases page](https://github.com/handsomefox/win-toolkit/releases).
 
+## 0.3.2
+
+- Update thiserror to 2.0.21, and replace the yanked yoke-derive 0.8.3 with 0.8.4.
+
 ## 0.3.1
 
 - Fix the repository link in the About section, which did not open.
