@@ -2,6 +2,10 @@
 
 Releases before 0.2.4 are listed on the [releases page](https://github.com/handsomefox/win-toolkit/releases).
 
+## 0.3.3
+
+- Update jiff to 0.2.38 and embed-resource to 3.0.12.
+
 ## 0.3.2
 
 - Update thiserror to 2.0.21, and replace the yanked yoke-derive 0.8.3 with 0.8.4.
