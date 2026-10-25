@@ -2,6 +2,16 @@
 
 Releases before 0.2.4 are listed on the [releases page](https://github.com/handsomefox/win-toolkit/releases).
 
+## 0.4.0
+
+- Windows Toolkit can now update itself from its GitHub releases. It checks once a day, and when
+  a new version is out, a chip in the header names it. Click the chip to read what changed since
+  your version, then download the update, skip that version, or leave it for later. The download
+  must match its published SHA-256 checksums before it replaces the app, and a restart finishes
+  the install. A restart waits for a running operation, so it never interrupts `sfc` or `DISM`.
+  To check more or less often, or never, open **About** > **App updates**.
+- Getting 0.4.0 itself is still a manual download. Later versions install from inside the app.
+
 ## 0.3.4
 
 - Replace the yanked clipboard-win 5.4.1 with 5.4.3, and update tokio to 1.54.1.
