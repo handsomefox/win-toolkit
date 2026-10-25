@@ -80,13 +80,29 @@ pub(crate) struct ToolkitApp {
     network: Vec<Operation>,
     performance: Vec<Operation>,
     diagnostics: Vec<Operation>,
+    updater: app_update::Updater,
+    update_settings: app_update::Settings,
+    update_open: bool,
 }
+
+/// The storage key for [`ToolkitApp::update_settings`].
+const UPDATE_SETTINGS_KEY: &str = "app_updates";
 
 impl ToolkitApp {
     pub(crate) fn new(cc: &eframe::CreationContext<'_>, log_path: Option<PathBuf>) -> Self {
         egui_extras::install_image_loaders(&cc.egui_ctx);
         theme::apply(&cc.egui_ctx);
+        let update_settings = cc
+            .storage
+            .and_then(|storage| eframe::get_value(storage, UPDATE_SETTINGS_KEY))
+            .unwrap_or_default();
         Self {
+            updater: app_update::Updater::new(crate::APP_INFO, {
+                let ctx = cc.egui_ctx.clone();
+                move || ctx.request_repaint()
+            }),
+            update_settings,
+            update_open: false,
             worker: worker::spawn(cc.egui_ctx.clone()),
             section: Section::Health,
             run: None,
@@ -150,7 +166,7 @@ impl ToolkitApp {
         self.worker.send(Command::Run(operation));
     }
 
-    fn draw_header(root: &mut egui::Ui) {
+    fn draw_header(&mut self, root: &mut egui::Ui) {
         egui::Panel::top("header")
             .frame(
                 egui::Frame::new()
@@ -158,15 +174,26 @@ impl ToolkitApp {
                     .inner_margin(egui::Margin::symmetric(12, 8)),
             )
             .show(root, |ui| {
-                ui.label(
-                    RichText::new(toolkit_core::APP_TITLE)
-                        .family(theme::bold())
-                        .size(theme::FONT_HEADING),
-                );
-                ui.label(
-                    RichText::new("System inspection, diagnostics, and documented maintenance")
-                        .color(theme::MUTED),
-                );
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.label(
+                            RichText::new(toolkit_core::APP_TITLE)
+                                .family(theme::bold())
+                                .size(theme::FONT_HEADING),
+                        );
+                        ui.label(
+                            RichText::new(
+                                "System inspection, diagnostics, and documented maintenance",
+                            )
+                            .color(theme::MUTED),
+                        );
+                    });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if crate::update::chip(ui, &self.updater, &self.update_settings) {
+                            self.update_open = true;
+                        }
+                    });
+                });
             });
     }
 
@@ -529,6 +556,14 @@ impl ToolkitApp {
         ui.label(RichText::new(concat!("Version ", env!("CARGO_PKG_VERSION"))).color(theme::MUTED));
         ui.add_space(theme::SPACE_SM);
         ui.hyperlink("https://github.com/handsomefox/win-toolkit");
+        ui.add_space(theme::SPACE_SM);
+        if ui
+            .button("App updates…")
+            .on_hover_text("Check for a new version and choose how often to check")
+            .clicked()
+        {
+            self.update_open = true;
+        }
         ui.add_space(theme::SPACE_MD);
         let logs_dir = self
             .log_path
@@ -827,10 +862,25 @@ impl eframe::App for ToolkitApp {
     fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = root.ctx().clone();
         self.drain_events();
-        Self::draw_header(root);
+        self.updater.poll(&mut self.update_settings);
+        self.draw_header(root);
         self.draw_sidebar(root);
         self.draw_run_panel(root);
         self.draw_central(root);
         self.draw_confirm(&ctx);
+        if self.update_open {
+            let busy = self.is_running();
+            crate::update::window(
+                &ctx,
+                &mut self.update_open,
+                &mut self.updater,
+                &mut self.update_settings,
+                busy,
+            );
+        }
+    }
+
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        eframe::set_value(storage, UPDATE_SETTINGS_KEY, &self.update_settings);
     }
 }

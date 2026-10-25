@@ -9,6 +9,7 @@ The workspace is layered so that everything portable stays testable on Linux:
 - `toolkit-core` holds the operation model and the built-in catalogs, command-line construction, the sandbox configuration, startup entries, and system information types. Operations are plain data.
 - `toolkit-platform` wraps the Windows APIs: process execution and elevation, known folders, startup entries, and system information.
 - `toolkit-app` is the egui desktop binary, and the only crate that may depend on egui.
+- `app-update` updates the app itself from its GitHub releases. Its `lib.rs` is byte-for-byte the same in all five apps, so change it in every app at once. `toolkit-app/src/update.rs` holds this app's chip and window around it.
 
 An operation is data in `toolkit-core`, not a function that does the work. Adding one means adding a catalog entry, not a new execution path.
 
@@ -28,7 +29,7 @@ Before a privileged operation runs, the confirmation dialog states what it does,
 
 Unit tests live beside their implementations in `#[cfg(test)]` modules. Because operations are plain data, the command line an operation builds is testable off Windows. Cover that, and cover the rejection path for anything that parses output or resolves a path.
 
-CI cannot reach the elevation flow. Exercise it by hand on Windows, along with output capture, cancellation, and any operation that changes system state.
+CI cannot reach the elevation flow. Exercise it by hand on Windows, along with output capture, cancellation, and any operation that changes system state. The same goes for an app update: run a debug build with `APP_UPDATE_PRETEND_VERSION` set to an older version.
 
 ## Bump CI tool pins by hand
 

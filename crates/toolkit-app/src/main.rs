@@ -8,6 +8,7 @@
 mod app;
 mod diagnostics;
 mod theme;
+mod update;
 mod worker;
 
 use eframe::egui;
@@ -27,12 +28,26 @@ fn main() -> eframe::Result {
             .with_icon(app_icon()),
         ..Default::default()
     };
-    eframe::run_native(
+    let result = eframe::run_native(
         toolkit_core::APP_TITLE,
         options,
         Box::new(move |cc| Ok(Box::new(app::ToolkitApp::new(cc, log_path)))),
-    )
+    );
+    // eframe saves the app's state before `run_native` returns, so the
+    // updated copy starts from everything this one knew.
+    if let Err(error) = app_update::restart_if_requested() {
+        tracing::error!(%error, "could not start the updated app");
+    }
+    result
 }
+
+/// Where this app's releases are published.
+const APP_INFO: app_update::AppInfo = app_update::AppInfo {
+    owner: "handsomefox",
+    repo: "win-toolkit",
+    bin: "win-toolkit",
+    version: env!("CARGO_PKG_VERSION"),
+};
 
 fn app_icon() -> egui::IconData {
     let bytes = include_bytes!("../assets/icon.png");
