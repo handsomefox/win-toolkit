@@ -14,9 +14,9 @@ name = "win-toolkit"
 path = "src/main.rs"
 
 [dependencies]
-app-update = { version = "=0.4.0", path = "../app-update" }
-toolkit-core = { version = "=0.4.0", path = "../toolkit-core" }
-toolkit-platform = { version = "=0.4.0", path = "../toolkit-platform" }
+app-update = { version = "=0.4.1", path = "../app-update" }
+toolkit-core = { version = "=0.4.1", path = "../toolkit-core" }
+toolkit-platform = { version = "=0.4.1", path = "../toolkit-platform" }
 crossbeam-channel.workspace = true
 eframe.workspace = true
 egui_extras.workspace = true

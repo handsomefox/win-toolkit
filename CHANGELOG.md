@@ -2,6 +2,16 @@
 
 Releases before 0.2.4 are listed on the [releases page](https://github.com/handsomefox/win-toolkit/releases).
 
+## 0.4.1
+
+- Give Windows Toolkit its own icon, a wrench and a screwdriver, in place of the Windows Cleaner
+  broom.
+- Update eframe and egui_extras to 0.37. The first launch after this update opens at the default
+  window size and position, and the output panel returns to its default height. Later launches
+  remember both again.
+- Update flate2 to 1.1.10, serde to 1.0.229, serde_json to 1.0.154, sha2 to 0.11.1,
+  windows-registry to 0.100.0, and zip to 9.2.0.
+
 ## 0.4.0
 
 - Windows Toolkit can now update itself from its GitHub releases. It checks once a day, and when

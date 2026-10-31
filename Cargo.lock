@@ -68,7 +68,7 @@ checksum = "fc7eb209b1518d6bb87b283c20095f5228ecda460da70b44f0802523dea6da04"
 
 [[package]]
 name = "app-update"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "flate2",
  "reqwest",
@@ -3190,7 +3190,7 @@ checksum = "7d56353a2a665ad0f41a421187180aab746c8c325620617ad883a99a1cbe66d2"
 
 [[package]]
 name = "toolkit-app"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "app-update",
  "crossbeam-channel",
@@ -3208,11 +3208,11 @@ dependencies = [
 
 [[package]]
 name = "toolkit-core"
-version = "0.4.0"
+version = "0.4.1"
 
 [[package]]
 name = "toolkit-platform"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "thiserror 2.0.21",
  "toolkit-core",
