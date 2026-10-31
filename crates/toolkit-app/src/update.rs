@@ -103,12 +103,7 @@ fn body(
                 .color(theme::SUCCESS),
         );
     } else {
-        ui.label(
-            RichText::new(format!(
-                "You have version {current}. It has not checked for a new version yet."
-            ))
-            .color(theme::MUTED),
-        );
+        ui.label(RichText::new(format!("You have version {current}.")).color(theme::MUTED));
     }
     if let Some(error) = updater.error() {
         ui.add_space(theme::SPACE_SM);
