@@ -1,12 +1,13 @@
 //! The eframe application shell: the section sidebar, per-section views, and the
 //! confirm-then-run flow that drives operations through the worker.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use eframe::egui::{self, RichText};
 use toolkit_core::{
     Elevation, Operation, Risk, SandboxConfig, StartupEntry, StartupScope, SystemInfo,
-    format_bytes, health_groups, launcher, network_operations, performance_operations,
+    diagnostics_operations, format_bytes, health_groups, launcher, network_operations,
+    open_logs_folder, performance_operations,
 };
 
 use crate::theme;
@@ -143,7 +144,8 @@ pub(crate) struct ToolkitApp {
     section: Section,
     run: RunPanel,
     confirm: Option<Operation>,
-    log_path: Option<PathBuf>,
+    /// The folder that holds the diagnostics log, when file logging works.
+    logs_dir: Option<PathBuf>,
     overview: Option<SystemInfo>,
     sandbox: SandboxConfig,
     /// Checked once: turning the feature on takes a reboot.
@@ -162,13 +164,14 @@ pub(crate) struct ToolkitApp {
 const UPDATE_SETTINGS_KEY: &str = "app_updates";
 
 impl ToolkitApp {
-    pub(crate) fn new(cc: &eframe::CreationContext<'_>, log_path: Option<PathBuf>) -> Self {
+    pub(crate) fn new(cc: &eframe::CreationContext<'_>, log_path: Option<&Path>) -> Self {
         egui_extras::install_image_loaders(&cc.egui_ctx);
         theme::apply(&cc.egui_ctx);
         let update_settings = cc
             .storage
             .and_then(|storage| eframe::get_value(storage, UPDATE_SETTINGS_KEY))
             .unwrap_or_default();
+        let logs_dir = log_path.and_then(Path::parent).map(Path::to_path_buf);
         Self {
             updater: app_update::Updater::new(crate::APP_INFO, {
                 let ctx = cc.egui_ctx.clone();
@@ -184,8 +187,8 @@ impl ToolkitApp {
             sandbox: SandboxConfig::default(),
             sandbox_available: sandbox_available(),
             startup: None,
-            diagnostics: build_diagnostics(log_path.as_deref()),
-            log_path,
+            diagnostics: build_diagnostics(logs_dir.as_deref()),
+            logs_dir,
             health: health_groups(),
             network: network_operations(),
             performance: performance_operations(),
@@ -559,27 +562,21 @@ impl ToolkitApp {
             self.update_open = true;
         }
         ui.add_space(theme::SPACE_MD);
-        let logs_dir = self
-            .log_path
-            .as_deref()
-            .and_then(std::path::Path::parent)
-            .map(std::path::Path::to_path_buf);
-        if let Some(dir) = logs_dir {
+        let running = self.is_running();
+        let mut open_logs = None;
+        if let Some(dir) = &self.logs_dir {
             ui.label(RichText::new("Diagnostics log").family(theme::bold()));
             ui.label(RichText::new(dir.display().to_string()).color(theme::MUTED));
             ui.add_space(theme::SPACE_XS);
             if ui
-                .add_enabled(!self.is_running(), egui::Button::new("Open logs folder"))
+                .add_enabled(!running, egui::Button::new("Open logs folder"))
                 .clicked()
             {
-                self.start(launcher(
-                    "open-logs-folder",
-                    "Logs folder",
-                    "Opens the folder containing this app's diagnostics logs.",
-                    dir.to_string_lossy().into_owned(),
-                    Vec::new(),
-                ));
+                open_logs = Some(open_logs_folder(&dir.to_string_lossy()));
             }
+        }
+        if let Some(operation) = open_logs {
+            self.start(operation);
         }
         ui.add_space(theme::SPACE_MD);
         ui.label(
@@ -696,8 +693,8 @@ fn load_startup() -> Vec<StartupEntry> {
 
 /// Whether the Windows Sandbox optional feature appears to be installed.
 fn sandbox_available() -> bool {
-    let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_owned());
-    std::path::Path::new(&format!(r"{system_root}\System32\WindowsSandbox.exe")).exists()
+    let system_root = toolkit_platform::system_root();
+    Path::new(&format!(r"{system_root}\System32\WindowsSandbox.exe")).exists()
 }
 
 /// Writes the sandbox configuration to a `.wsb` file and returns its path.
@@ -860,79 +857,25 @@ fn status_text(status: &RunStatus) -> (String, egui::Color32) {
     }
 }
 
-/// Builds the Diagnostics catalog, which mixes a captured report generator with
-/// launchers for built-in Windows tools and the app's own files.
-fn build_diagnostics(log_path: Option<&std::path::Path>) -> Vec<Operation> {
-    let mut ops = Vec::new();
-
-    if let Some(reports) = toolkit_platform::app_data_dir().map(|dir| dir.join("reports")) {
-        let _ = std::fs::create_dir_all(&reports);
-        let report_file = reports.join("battery-report.html");
-        ops.push(Operation {
-            id: "battery-report",
-            label: "Generate battery report",
-            description: "Runs powercfg to write a detailed battery health and usage report, then \
-                          use 'Open battery report' to view it.",
-            duration_hint: "",
-            risk: Risk::ReadOnly,
-            elevation: Elevation::None,
-            cancelable: false,
-            execution: toolkit_core::Execution::Capture(toolkit_core::CommandLine::program(
-                "powercfg",
-                &["/batteryreport", "/output", &report_file.to_string_lossy()],
-            )),
-        });
-        ops.push(launcher(
-            "open-battery-report",
-            "Open battery report",
-            "Opens the most recently generated battery report in your browser.",
-            report_file.to_string_lossy().into_owned(),
-            Vec::new(),
-        ));
-    }
-
-    ops.push(launcher(
-        "open-dxdiag",
-        "Open DirectX Diagnostic Tool",
-        "Opens dxdiag, which reports display, sound, and input device information.",
-        "dxdiag".to_owned(),
-        Vec::new(),
-    ));
-    ops.push(launcher(
-        "open-eventvwr",
-        "Open Event Viewer",
-        "Opens the Windows Event Viewer to inspect system and application logs.",
-        "eventvwr".to_owned(),
-        Vec::new(),
-    ));
-    ops.push(launcher(
-        "open-reliability",
-        "Open Reliability Monitor",
-        "Opens Reliability Monitor, a timeline of crashes and warnings.",
-        "perfmon".to_owned(),
-        vec!["/rel".to_owned()],
-    ));
-
-    let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_owned());
-    ops.push(launcher(
-        "open-cbs-log",
-        "Open servicing log (CBS.log)",
-        "Opens the component servicing log written by SFC and DISM.",
-        format!(r"{system_root}\Logs\CBS\CBS.log"),
-        Vec::new(),
-    ));
-
-    if let Some(dir) = log_path.and_then(std::path::Path::parent) {
-        ops.push(launcher(
-            "open-logs",
-            "Open logs folder",
-            "Opens the folder containing this app's diagnostics logs.",
-            dir.to_string_lossy().into_owned(),
-            Vec::new(),
-        ));
-    }
-
-    ops
+/// Builds the Diagnostics catalog, creating the folder the battery report is
+/// written to.
+fn build_diagnostics(logs_dir: Option<&Path>) -> Vec<Operation> {
+    let report_file = toolkit_platform::app_data_dir().map(|dir| {
+        let reports = dir.join("reports");
+        if let Err(error) = std::fs::create_dir_all(&reports) {
+            tracing::warn!(%error, "could not create {}", reports.display());
+        }
+        reports
+            .join("battery-report.html")
+            .to_string_lossy()
+            .into_owned()
+    });
+    let logs_dir = logs_dir.map(|dir| dir.to_string_lossy().into_owned());
+    diagnostics_operations(
+        report_file.as_deref(),
+        &toolkit_platform::system_root(),
+        logs_dir.as_deref(),
+    )
 }
 
 impl eframe::App for ToolkitApp {

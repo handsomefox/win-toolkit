@@ -440,6 +440,92 @@ pub fn performance_operations() -> Vec<Operation> {
     ]
 }
 
+/// The Diagnostics catalog, which mixes a captured report generator with
+/// launchers for built-in Windows tools and the app's own files.
+/// `battery_report` is the file powercfg writes, when the app has a folder for
+/// it; `system_root` is the Windows directory; `logs_dir` holds this app's
+/// diagnostics logs, when it has one.
+#[must_use]
+pub fn diagnostics_operations(
+    battery_report: Option<&str>,
+    system_root: &str,
+    logs_dir: Option<&str>,
+) -> Vec<Operation> {
+    let mut ops = Vec::new();
+
+    if let Some(report_file) = battery_report {
+        ops.push(Operation {
+            id: "battery-report",
+            label: "Generate battery report",
+            description: "Runs powercfg to write a detailed battery health and usage report, then \
+                          use 'Open battery report' to view it.",
+            duration_hint: "",
+            risk: Risk::ReadOnly,
+            elevation: Elevation::None,
+            cancelable: false,
+            execution: Execution::Capture(CommandLine::program(
+                "powercfg",
+                &["/batteryreport", "/output", report_file],
+            )),
+        });
+        ops.push(launcher(
+            "open-battery-report",
+            "Open battery report",
+            "Opens the most recently generated battery report in your browser.",
+            report_file.to_owned(),
+            Vec::new(),
+        ));
+    }
+
+    ops.push(launcher(
+        "open-dxdiag",
+        "Open DirectX Diagnostic Tool",
+        "Opens dxdiag, which reports display, sound, and input device information.",
+        "dxdiag".to_owned(),
+        Vec::new(),
+    ));
+    ops.push(launcher(
+        "open-eventvwr",
+        "Open Event Viewer",
+        "Opens the Windows Event Viewer to inspect system and application logs.",
+        "eventvwr".to_owned(),
+        Vec::new(),
+    ));
+    ops.push(launcher(
+        "open-reliability",
+        "Open Reliability Monitor",
+        "Opens Reliability Monitor, a timeline of crashes and warnings.",
+        "perfmon".to_owned(),
+        vec!["/rel".to_owned()],
+    ));
+
+    ops.push(launcher(
+        "open-cbs-log",
+        "Open servicing log (CBS.log)",
+        "Opens the component servicing log written by SFC and DISM.",
+        format!(r"{system_root}\Logs\CBS\CBS.log"),
+        Vec::new(),
+    ));
+
+    if let Some(dir) = logs_dir {
+        ops.push(open_logs_folder(dir));
+    }
+
+    ops
+}
+
+/// Opens the folder that holds this app's diagnostics logs.
+#[must_use]
+pub fn open_logs_folder(dir: &str) -> Operation {
+    launcher(
+        "open-logs",
+        "Open logs folder",
+        "Opens the folder containing this app's diagnostics logs.",
+        dir.to_owned(),
+        Vec::new(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -529,6 +615,22 @@ mod tests {
             assert_eq!(op.elevation, Elevation::Administrator);
             assert_eq!(op.risk, Risk::Medium);
         }
+    }
+
+    #[test]
+    fn battery_report_passes_its_output_path_as_one_argument() {
+        let report = r"C:\Users\John Doe\AppData\Local\win-toolkit\reports\battery-report.html";
+        let ops = diagnostics_operations(Some(report), r"C:\Windows", None);
+        let generate = ops.iter().find(|op| op.id == "battery-report").unwrap();
+        assert_eq!(generate.elevation, Elevation::None);
+        assert_eq!(
+            generate.execution,
+            Execution::Capture(CommandLine::program(
+                "powercfg",
+                &["/batteryreport", "/output", report],
+            ))
+        );
+        assert!(!ops.iter().any(|op| op.id == "open-logs"));
     }
 
     #[test]

@@ -17,7 +17,8 @@ pub use command::{
     elevated_cmd_parameters, looks_like_utf16le,
 };
 pub use operation::{
-    Execution, Operation, health_groups, launcher, network_operations, performance_operations,
+    Execution, Operation, diagnostics_operations, health_groups, launcher, network_operations,
+    open_logs_folder, performance_operations,
 };
 pub use sandbox::SandboxConfig;
 pub use startup::{StartupEntry, StartupScope};

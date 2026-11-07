@@ -30,6 +30,13 @@ fn home_dir() -> Option<PathBuf> {
     env_path("USERPROFILE").or_else(|| env_path("HOME"))
 }
 
+/// The Windows directory, from `SystemRoot`, or `C:\Windows` when that is not
+/// set.
+#[must_use]
+pub fn system_root() -> String {
+    std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_owned())
+}
+
 /// The application's data directory: `%LOCALAPPDATA%\win-toolkit` on Windows,
 /// `~/.win-toolkit` elsewhere.
 #[must_use]

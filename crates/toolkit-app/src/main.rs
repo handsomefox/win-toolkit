@@ -31,7 +31,7 @@ fn main() -> eframe::Result {
     let result = eframe::run_native(
         toolkit_core::APP_TITLE,
         options,
-        Box::new(move |cc| Ok(Box::new(app::ToolkitApp::new(cc, log_path)))),
+        Box::new(move |cc| Ok(Box::new(app::ToolkitApp::new(cc, log_path.as_deref())))),
     );
     // eframe saves the app's state before `run_native` returns, so the
     // updated copy starts from everything this one knew.
