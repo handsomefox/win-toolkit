@@ -10,7 +10,7 @@ use crossbeam_channel::{Receiver, Sender};
 use eframe::egui;
 use toolkit_core::{
     CommandLine, Elevation, Execution, Operation, compact_lines, console_lines,
-    elevated_cmd_parameters,
+    elevated_cmd_parameters, looks_like_utf16le,
 };
 use toolkit_platform::{ExecError, launch, run_capture, run_elevated};
 
@@ -243,16 +243,8 @@ impl LogTail {
         if self.offset < 64 {
             let mut sample = [0_u8; 64];
             let count = file.read(&mut sample)?;
-            self.utf16 = sample[..count].starts_with(&[0xff, 0xfe])
-                || (count >= 4
-                    && sample[..count]
-                        .iter()
-                        .skip(1)
-                        .step_by(2)
-                        .filter(|byte| **byte == 0)
-                        .count()
-                        * 2
-                        >= count / 2);
+            let sample = &sample[..count];
+            self.utf16 = sample.starts_with(&[0xff, 0xfe]) || looks_like_utf16le(sample);
         }
         // Skip output older than the display window after a long pause. The
         // complete log stays on disk; each read and event has a fixed size cap.

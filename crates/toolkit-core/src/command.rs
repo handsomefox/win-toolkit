@@ -128,7 +128,8 @@ fn decode_utf16le(bytes: &[u8]) -> String {
 
 /// Heuristic for BOM-less UTF-16LE: ASCII text encoded as UTF-16LE has a NUL as
 /// every second byte. We sample the leading bytes and look for that pattern.
-fn looks_like_utf16le(bytes: &[u8]) -> bool {
+#[must_use]
+pub fn looks_like_utf16le(bytes: &[u8]) -> bool {
     let sample = &bytes[..bytes.len().min(64)];
     if sample.len() < 4 {
         return false;
