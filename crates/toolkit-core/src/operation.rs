@@ -98,15 +98,6 @@ pub fn health_groups() -> Vec<(&'static str, Vec<Operation>)> {
     ]
 }
 
-/// The Health &amp; Repair operations as a flat list.
-#[must_use]
-pub fn health_operations() -> Vec<Operation> {
-    health_groups()
-        .into_iter()
-        .flat_map(|(_, ops)| ops)
-        .collect()
-}
-
 fn sfc_scannow() -> Operation {
     Operation {
         id: "sfc-scannow",
@@ -506,8 +497,8 @@ mod tests {
 
     #[test]
     fn sfc_is_the_first_elevated_health_operation() {
-        let health = health_operations();
-        let sfc = &health[0];
+        let health = health_groups();
+        let sfc = &health[0].1[0];
         assert_eq!(sfc.id, "sfc-scannow");
         assert_eq!(sfc.elevation, Elevation::Administrator);
         assert!(!sfc.cancelable);
