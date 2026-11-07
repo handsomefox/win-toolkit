@@ -325,7 +325,7 @@ impl ToolkitApp {
                     });
                 });
                 ui.add_space(theme::SPACE_MD);
-                overview_card(ui, |ui| {
+                card(ui, |ui| {
                     info_row(
                         ui,
                         "OS",
@@ -358,7 +358,7 @@ impl ToolkitApp {
                 ui.add_space(theme::SPACE_MD);
                 ui.label(RichText::new("Drives").family(theme::bold()));
                 ui.add_space(theme::SPACE_XS);
-                overview_card(ui, |ui| {
+                card(ui, |ui| {
                     for drive in &info.drives {
                         info_row(
                             ui,
@@ -643,39 +643,33 @@ impl ToolkitApp {
 /// the user toggled it.
 fn startup_card(ui: &mut egui::Ui, entry: &StartupEntry) -> Option<bool> {
     let mut toggled = None;
-    egui::Frame::new()
-        .fill(theme::SURFACE)
-        .stroke(egui::Stroke::new(1.0, theme::BORDER))
-        .corner_radius(theme::RADIUS_MD)
-        .inner_margin(12)
-        .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.label(RichText::new(&entry.name).family(theme::bold()));
-                    ui.label(RichText::new(&entry.command).color(theme::MUTED));
-                    ui.label(RichText::new(entry.scope.label()).color(theme::MUTED));
-                    if !entry.can_toggle {
-                        ui.label(
-                            RichText::new("System-wide; requires Administrator to change")
-                                .color(theme::MUTED),
-                        );
-                    }
-                });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let mut enabled = entry.enabled;
-                    if ui
-                        .add_enabled(
-                            entry.can_toggle,
-                            egui::Checkbox::new(&mut enabled, "Enabled"),
-                        )
-                        .changed()
-                    {
-                        toggled = Some(enabled);
-                    }
-                });
+    card(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.vertical(|ui| {
+                ui.label(RichText::new(&entry.name).family(theme::bold()));
+                ui.label(RichText::new(&entry.command).color(theme::MUTED));
+                ui.label(RichText::new(entry.scope.label()).color(theme::MUTED));
+                if !entry.can_toggle {
+                    ui.label(
+                        RichText::new("System-wide; requires Administrator to change")
+                            .color(theme::MUTED),
+                    );
+                }
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let mut enabled = entry.enabled;
+                if ui
+                    .add_enabled(
+                        entry.can_toggle,
+                        egui::Checkbox::new(&mut enabled, "Enabled"),
+                    )
+                    .changed()
+                {
+                    toggled = Some(enabled);
+                }
             });
         });
+    });
     toggled
 }
 
@@ -707,8 +701,8 @@ fn write_sandbox_config(config: SandboxConfig) -> Result<String, String> {
     Ok(path.to_string_lossy().into_owned())
 }
 
-/// Wraps read-only content in a full-width surface card.
-fn overview_card(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) {
+/// Wraps content in a full-width surface card.
+fn card(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::new()
         .fill(theme::SURFACE)
         .stroke(egui::Stroke::new(1.0, theme::BORDER))
@@ -801,40 +795,34 @@ fn operation_cards(ui: &mut egui::Ui, ops: &[Operation], running: bool) -> Optio
 /// Draws one operation as a card and returns whether its action was clicked.
 fn operation_card(ui: &mut egui::Ui, operation: &Operation, running: bool) -> bool {
     let mut clicked = false;
-    egui::Frame::new()
-        .fill(theme::SURFACE)
-        .stroke(egui::Stroke::new(1.0, theme::BORDER))
-        .corner_radius(theme::RADIUS_MD)
-        .inner_margin(12)
-        .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            ui.label(
-                RichText::new(operation.label)
-                    .family(theme::bold())
-                    .size(theme::FONT_BODY),
-            );
+    card(ui, |ui| {
+        ui.label(
+            RichText::new(operation.label)
+                .family(theme::bold())
+                .size(theme::FONT_BODY),
+        );
+        ui.add_space(theme::SPACE_XS);
+        ui.label(RichText::new(operation.description).color(theme::MUTED));
+        if !operation.duration_hint.is_empty() {
             ui.add_space(theme::SPACE_XS);
-            ui.label(RichText::new(operation.description).color(theme::MUTED));
-            if !operation.duration_hint.is_empty() {
-                ui.add_space(theme::SPACE_XS);
-                ui.label(RichText::new(operation.duration_hint).color(theme::MUTED));
-            }
-            if operation.elevation == Elevation::Administrator {
-                ui.label(RichText::new("Requires Administrator").color(theme::WARNING));
-            }
-            ui.add_space(theme::SPACE_SM);
-            let action = if operation.is_capture() {
-                "Run"
-            } else {
-                "Open"
-            };
-            if ui
-                .add_enabled(!running, egui::Button::new(action))
-                .clicked()
-            {
-                clicked = true;
-            }
-        });
+            ui.label(RichText::new(operation.duration_hint).color(theme::MUTED));
+        }
+        if operation.elevation == Elevation::Administrator {
+            ui.label(RichText::new("Requires Administrator").color(theme::WARNING));
+        }
+        ui.add_space(theme::SPACE_SM);
+        let action = if operation.is_capture() {
+            "Run"
+        } else {
+            "Open"
+        };
+        if ui
+            .add_enabled(!running, egui::Button::new(action))
+            .clicked()
+        {
+            clicked = true;
+        }
+    });
     clicked
 }
 
