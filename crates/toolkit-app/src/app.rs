@@ -64,10 +64,84 @@ enum RunStatus {
     Finished(Outcome),
 }
 
+impl RunView {
+    fn running(operation: &Operation) -> Self {
+        Self {
+            label: operation.label,
+            is_capture: operation.is_capture(),
+            status: RunStatus::Running,
+            lines: Vec::new(),
+        }
+    }
+
+    fn failed(label: &'static str, message: String) -> Self {
+        Self {
+            label,
+            is_capture: false,
+            status: RunStatus::Finished(Outcome::Error(message)),
+            lines: Vec::new(),
+        }
+    }
+}
+
+/// What the output panel shows: nothing, the operation the worker is running,
+/// or how the last run ended. A running operation keeps its place until it
+/// finishes, so the worker's events always reach the run they belong to, and
+/// nothing can start while the worker is busy.
+#[derive(Default)]
+struct RunPanel {
+    view: Option<RunView>,
+}
+
+impl RunPanel {
+    fn is_running(&self) -> bool {
+        matches!(
+            self.view.as_ref().map(|run| &run.status),
+            Some(RunStatus::Running)
+        )
+    }
+
+    fn view(&self) -> Option<&RunView> {
+        self.view.as_ref()
+    }
+
+    /// Shows `run` in place of a finished one. Returns false, leaving the
+    /// panel as it is, while an operation runs.
+    fn show(&mut self, run: RunView) -> bool {
+        if self.is_running() {
+            return false;
+        }
+        self.view = Some(run);
+        true
+    }
+
+    /// Hides a finished run. A running one stays.
+    fn dismiss(&mut self) {
+        if !self.is_running() {
+            self.view = None;
+        }
+    }
+
+    /// Applies a worker event to the running operation.
+    fn apply(&mut self, event: Event) {
+        let Some(run) = self
+            .view
+            .as_mut()
+            .filter(|run| matches!(run.status, RunStatus::Running))
+        else {
+            return;
+        };
+        match event {
+            Event::Output { lines } => run.lines = lines,
+            Event::Finished(outcome) => run.status = RunStatus::Finished(outcome),
+        }
+    }
+}
+
 pub(crate) struct ToolkitApp {
     worker: Worker,
     section: Section,
-    run: Option<RunView>,
+    run: RunPanel,
     confirm: Option<Operation>,
     log_path: Option<PathBuf>,
     overview: Option<SystemInfo>,
@@ -102,7 +176,7 @@ impl ToolkitApp {
             update_open: false,
             worker: worker::spawn(cc.egui_ctx.clone()),
             section: Section::Health,
-            run: None,
+            run: RunPanel::default(),
             confirm: None,
             overview: None,
             sandbox: SandboxConfig::default(),
@@ -116,26 +190,12 @@ impl ToolkitApp {
     }
 
     fn is_running(&self) -> bool {
-        matches!(
-            self.run.as_ref().map(|run| &run.status),
-            Some(RunStatus::Running)
-        )
+        self.run.is_running()
     }
 
     fn drain_events(&mut self) {
         while let Some(event) = self.worker.try_recv() {
-            match event {
-                Event::Output { lines } => {
-                    if let Some(run) = &mut self.run {
-                        run.lines = lines;
-                    }
-                }
-                Event::Finished(outcome) => {
-                    if let Some(run) = &mut self.run {
-                        run.status = RunStatus::Finished(outcome);
-                    }
-                }
-            }
+            self.run.apply(event);
         }
     }
 
@@ -148,13 +208,20 @@ impl ToolkitApp {
     }
 
     fn start(&mut self, operation: Operation) {
-        self.run = Some(RunView {
-            label: operation.label,
-            is_capture: operation.is_capture(),
-            status: RunStatus::Running,
-            lines: Vec::new(),
-        });
-        self.worker.send(Command::Run(operation));
+        if self.run.show(RunView::running(&operation)) {
+            self.worker.send(Command::Run(operation));
+        } else {
+            tracing::warn!(
+                operation = operation.id,
+                "not started while another operation runs"
+            );
+        }
+    }
+
+    /// Reports a failure on the UI thread in the output panel.
+    fn show_error(&mut self, label: &'static str, message: String) {
+        tracing::warn!("{label}: {message}");
+        self.run.show(RunView::failed(label, message));
     }
 
     fn draw_header(&mut self, root: &mut egui::Ui) {
@@ -325,7 +392,13 @@ impl ToolkitApp {
                 .color(theme::WARNING),
             );
             ui.add_space(theme::SPACE_XS);
-            if ui.button("Open Windows Features").clicked() {
+            if ui
+                .add_enabled(
+                    !self.is_running(),
+                    egui::Button::new("Open Windows Features"),
+                )
+                .clicked()
+            {
                 open_features = true;
             }
             ui.add_space(theme::SPACE_SM);
@@ -377,14 +450,7 @@ impl ToolkitApp {
                 path,
                 Vec::new(),
             )),
-            Err(message) => {
-                self.run = Some(RunView {
-                    label: "Windows Sandbox",
-                    is_capture: false,
-                    status: RunStatus::Finished(Outcome::Error(message)),
-                    lines: Vec::new(),
-                });
-            }
+            Err(message) => self.show_error("Windows Sandbox", message),
         }
     }
 
@@ -429,14 +495,7 @@ impl ToolkitApp {
         if let Some((scope, name, enabled)) = toggle {
             match toolkit_platform::set_startup_enabled(scope, &name, enabled) {
                 Ok(()) => self.startup = Some(toolkit_platform::list_startup()),
-                Err(message) => {
-                    self.run = Some(RunView {
-                        label: "Startup",
-                        is_capture: false,
-                        status: RunStatus::Finished(Outcome::Error(message)),
-                        lines: Vec::new(),
-                    });
-                }
+                Err(message) => self.show_error("Startup", message),
             }
         }
     }
@@ -494,7 +553,7 @@ impl ToolkitApp {
     /// captured output. Shared across sections so output never depends on which
     /// section is visible.
     fn draw_run_panel(&mut self, root: &mut egui::Ui) {
-        if self.run.is_none() {
+        if self.run.view().is_none() {
             return;
         }
         let mut dismiss = false;
@@ -508,22 +567,25 @@ impl ToolkitApp {
                     .inner_margin(egui::Margin::symmetric(12, 10)),
             )
             .show(root, |ui| {
-                let Some(run) = &self.run else {
+                let Some(run) = self.run.view() else {
                     return;
                 };
+                let running = matches!(run.status, RunStatus::Running);
                 ui.horizontal(|ui| {
                     ui.label(RichText::new(run.label).family(theme::bold()));
                     let (text, color) = status_text(&run.status);
                     ui.label(RichText::new(text).color(color));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Dismiss").clicked() {
+                        if ui
+                            .add_enabled(!running, egui::Button::new("Dismiss"))
+                            .clicked()
+                        {
                             dismiss = true;
                         }
                     });
                 });
                 if run.is_capture {
                     ui.add_space(theme::SPACE_SM);
-                    let running = matches!(run.status, RunStatus::Running);
                     egui::ScrollArea::vertical()
                         .id_salt("run-output-scroll")
                         .auto_shrink([false, false])
@@ -537,7 +599,7 @@ impl ToolkitApp {
                 }
             });
         if dismiss {
-            self.run = None;
+            self.run.dismiss();
         }
     }
 
@@ -565,7 +627,10 @@ impl ToolkitApp {
             ui.label(RichText::new("Diagnostics log").family(theme::bold()));
             ui.label(RichText::new(dir.display().to_string()).color(theme::MUTED));
             ui.add_space(theme::SPACE_XS);
-            if ui.button("Open logs folder").clicked() {
+            if ui
+                .add_enabled(!self.is_running(), egui::Button::new("Open logs folder"))
+                .clicked()
+            {
                 self.start(launcher(
                     "open-logs-folder",
                     "Logs folder",
@@ -588,6 +653,7 @@ impl ToolkitApp {
         let Some(operation) = self.confirm.clone() else {
             return;
         };
+        let running = self.is_running();
         let mut run = false;
         let mut cancel = false;
         egui::Window::new("Confirm operation")
@@ -620,7 +686,7 @@ impl ToolkitApp {
                     if ui.button("Cancel").clicked() {
                         cancel = true;
                     }
-                    if ui.button("Run").clicked() {
+                    if ui.add_enabled(!running, egui::Button::new("Run")).clicked() {
                         run = true;
                     }
                 });
@@ -879,5 +945,56 @@ impl eframe::App for ToolkitApp {
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, UPDATE_SETTINGS_KEY, &self.update_settings);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn operation(label: &'static str) -> Operation {
+        launcher(
+            "test",
+            label,
+            "Opens a test target.",
+            "x".to_owned(),
+            Vec::new(),
+        )
+    }
+
+    #[test]
+    fn a_running_operation_keeps_the_panel_until_it_finishes() {
+        let mut panel = RunPanel::default();
+        assert!(panel.show(RunView::running(&operation("first"))));
+        assert!(panel.is_running());
+
+        assert!(!panel.show(RunView::running(&operation("second"))));
+        assert!(!panel.show(RunView::failed("Startup", "denied".to_owned())));
+        panel.dismiss();
+        assert_eq!(panel.view().map(|run| run.label), Some("first"));
+
+        panel.apply(Event::Output {
+            lines: vec!["line".to_owned()],
+        });
+        panel.apply(Event::Finished(Outcome::Success));
+        assert!(!panel.is_running());
+        assert_eq!(panel.view().unwrap().lines, ["line"]);
+
+        assert!(panel.show(RunView::running(&operation("second"))));
+        assert_eq!(panel.view().map(|run| run.label), Some("second"));
+    }
+
+    #[test]
+    fn a_finished_run_can_be_dismissed_and_takes_no_more_events() {
+        let mut panel = RunPanel::default();
+        assert!(panel.show(RunView::failed("Startup", "denied".to_owned())));
+        assert!(!panel.is_running());
+        panel.apply(Event::Finished(Outcome::Success));
+        assert!(matches!(
+            panel.view().unwrap().status,
+            RunStatus::Finished(Outcome::Error(_))
+        ));
+        panel.dismiss();
+        assert!(panel.view().is_none());
     }
 }
