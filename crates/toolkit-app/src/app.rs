@@ -61,10 +61,7 @@ struct RunView {
 
 enum RunStatus {
     Running,
-    Success,
-    Failed(i32),
-    Declined,
-    Error(String),
+    Finished(Outcome),
 }
 
 pub(crate) struct ToolkitApp {
@@ -135,12 +132,7 @@ impl ToolkitApp {
                 }
                 Event::Finished(outcome) => {
                     if let Some(run) = &mut self.run {
-                        run.status = match outcome {
-                            Outcome::Success => RunStatus::Success,
-                            Outcome::Failed(code) => RunStatus::Failed(code),
-                            Outcome::Declined => RunStatus::Declined,
-                            Outcome::Error(message) => RunStatus::Error(message),
-                        };
+                        run.status = RunStatus::Finished(outcome);
                     }
                 }
             }
@@ -389,7 +381,7 @@ impl ToolkitApp {
                 self.run = Some(RunView {
                     label: "Windows Sandbox",
                     is_capture: false,
-                    status: RunStatus::Error(message),
+                    status: RunStatus::Finished(Outcome::Error(message)),
                     lines: Vec::new(),
                 });
             }
@@ -441,7 +433,7 @@ impl ToolkitApp {
                     self.run = Some(RunView {
                         label: "Startup",
                         is_capture: false,
-                        status: RunStatus::Error(message),
+                        status: RunStatus::Finished(Outcome::Error(message)),
                         lines: Vec::new(),
                     });
                 }
@@ -772,13 +764,19 @@ fn operation_card(ui: &mut egui::Ui, operation: &Operation, running: bool) -> bo
 fn status_text(status: &RunStatus) -> (String, egui::Color32) {
     match status {
         RunStatus::Running => ("Running…".to_owned(), theme::WARNING),
-        RunStatus::Success => ("Completed successfully.".to_owned(), theme::SUCCESS),
-        RunStatus::Failed(code) => (format!("Exited with code {code}."), theme::DANGER),
-        RunStatus::Declined => (
+        RunStatus::Finished(Outcome::Success) => {
+            ("Completed successfully.".to_owned(), theme::SUCCESS)
+        }
+        RunStatus::Finished(Outcome::Failed(code)) => {
+            (format!("Exited with code {code}."), theme::DANGER)
+        }
+        RunStatus::Finished(Outcome::Declined) => (
             "Elevation was declined; nothing was run.".to_owned(),
             theme::MUTED,
         ),
-        RunStatus::Error(message) => (format!("Could not run: {message}"), theme::DANGER),
+        RunStatus::Finished(Outcome::Error(message)) => {
+            (format!("Could not run: {message}"), theme::DANGER)
+        }
     }
 }
 

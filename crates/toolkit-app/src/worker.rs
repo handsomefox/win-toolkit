@@ -42,6 +42,16 @@ pub(crate) enum Outcome {
     Error(String),
 }
 
+impl Outcome {
+    fn from_exit_code(code: i32) -> Self {
+        if code == 0 {
+            Outcome::Success
+        } else {
+            Outcome::Failed(code)
+        }
+    }
+}
+
 pub(crate) struct Worker {
     commands: Sender<Command>,
     events: Receiver<Event>,
@@ -132,11 +142,7 @@ fn run_unelevated_capture(operation: &Operation, command: &CommandLine, emit: &i
                 code = result.code,
                 "command finished"
             );
-            emit(Event::Finished(if result.code == 0 {
-                Outcome::Success
-            } else {
-                Outcome::Failed(result.code)
-            }));
+            emit(Event::Finished(Outcome::from_exit_code(result.code)));
         }
         Err(err) => {
             tracing::warn!(operation = operation.id, "command failed: {err}");
@@ -192,11 +198,7 @@ fn run_elevated_capture(operation: &Operation, command: &CommandLine, emit: &imp
                     emit(Event::Output { lines });
                 }
                 tracing::info!(operation = operation.id, code, "operation finished");
-                emit(Event::Finished(if code == 0 {
-                    Outcome::Success
-                } else {
-                    Outcome::Failed(code)
-                }));
+                emit(Event::Finished(Outcome::from_exit_code(code)));
                 return;
             }
             Ok(None) => {}
