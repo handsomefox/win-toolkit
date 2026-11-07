@@ -128,7 +128,6 @@ impl ToolkitApp {
     fn drain_events(&mut self) {
         while let Some(event) = self.worker.try_recv() {
             match event {
-                Event::Started => {}
                 Event::Output { lines } => {
                     if let Some(run) = &mut self.run {
                         run.lines = lines;

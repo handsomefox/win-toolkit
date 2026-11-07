@@ -23,8 +23,6 @@ pub(crate) enum Command {
 }
 
 pub(crate) enum Event {
-    /// The operation launched and is now running (the UAC prompt was accepted).
-    Started,
     /// The latest full set of output lines captured so far (replaces the
     /// previous set in the UI).
     Output { lines: Vec<String> },
@@ -123,7 +121,6 @@ fn run_unelevated_capture(operation: &Operation, command: &CommandLine, emit: &i
         )));
         return;
     };
-    emit(Event::Started);
     tracing::info!(operation = operation.id, "running unelevated command");
     match run_capture(&spec.program, &spec.args) {
         Ok(result) => {
@@ -180,8 +177,6 @@ fn run_elevated_capture(operation: &Operation, command: &CommandLine, emit: &imp
             return;
         }
     };
-
-    emit(Event::Started);
 
     let mut tail = LogTail::default();
     loop {
