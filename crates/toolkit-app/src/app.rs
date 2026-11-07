@@ -146,6 +146,8 @@ pub(crate) struct ToolkitApp {
     log_path: Option<PathBuf>,
     overview: Option<SystemInfo>,
     sandbox: SandboxConfig,
+    /// Checked once: turning the feature on takes a reboot.
+    sandbox_available: bool,
     startup: Option<Vec<StartupEntry>>,
     health: Vec<(&'static str, Vec<Operation>)>,
     network: Vec<Operation>,
@@ -180,6 +182,7 @@ impl ToolkitApp {
             confirm: None,
             overview: None,
             sandbox: SandboxConfig::default(),
+            sandbox_available: sandbox_available(),
             startup: None,
             diagnostics: build_diagnostics(log_path.as_deref()),
             log_path,
@@ -273,39 +276,35 @@ impl ToolkitApp {
     }
 
     fn draw_central(&mut self, root: &mut egui::Ui) {
+        let running = self.is_running();
+        let mut clicked = None;
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(theme::BACKGROUND).inner_margin(16))
             .show(root, |ui| match self.section {
                 Section::Overview => self.draw_overview(ui),
-                Section::Health => {
-                    let groups = self.health.clone();
-                    self.draw_health(ui, &groups);
-                }
+                Section::Health => clicked = health_section(ui, &self.health, running),
                 Section::Network => {
-                    let ops = self.network.clone();
-                    self.draw_operation_section(ui, "Network", &ops);
+                    clicked = operation_section(ui, "Network", &self.network, running);
                 }
                 Section::Performance => {
-                    let ops = self.performance.clone();
-                    self.draw_operation_section(ui, "Performance", &ops);
+                    clicked = operation_section(ui, "Performance", &self.performance, running);
                 }
                 Section::Diagnostics => {
-                    let ops = self.diagnostics.clone();
-                    self.draw_operation_section(ui, "Diagnostics", &ops);
+                    clicked = operation_section(ui, "Diagnostics", &self.diagnostics, running);
                 }
                 Section::Sandbox => self.draw_sandbox(ui),
                 Section::Startup => self.draw_startup(ui),
                 Section::About => self.draw_about(ui),
             });
+        if let Some(operation) = clicked {
+            self.on_operation_clicked(operation);
+        }
     }
 
     fn draw_overview(&mut self, ui: &mut egui::Ui) {
-        if self.overview.is_none() {
-            self.overview = Some(toolkit_platform::system_info());
-        }
-        let Some(info) = self.overview.clone() else {
-            return;
-        };
+        let info = &*self
+            .overview
+            .get_or_insert_with(toolkit_platform::system_info);
         let mut refresh = false;
         let mut copy = false;
         egui::ScrollArea::vertical()
@@ -370,18 +369,18 @@ impl ToolkitApp {
                     }
                 });
             });
-        if refresh {
-            self.overview = Some(toolkit_platform::system_info());
-        }
         if copy {
             ui.ctx().copy_text(info.to_report());
+        }
+        if refresh {
+            self.overview = Some(toolkit_platform::system_info());
         }
     }
 
     fn draw_sandbox(&mut self, ui: &mut egui::Ui) {
         ui.heading("Windows Sandbox");
         ui.add_space(theme::SPACE_MD);
-        let available = sandbox_available();
+        let available = self.sandbox_available;
         let mut open_features = false;
         if !available {
             ui.label(
@@ -455,16 +454,7 @@ impl ToolkitApp {
     }
 
     fn draw_startup(&mut self, ui: &mut egui::Ui) {
-        if self.startup.is_none() {
-            self.startup = Some(toolkit_platform::list_startup());
-        }
-        let mut entries = self.startup.clone().unwrap_or_default();
-        entries.sort_by(|a, b| {
-            let scope_rank = |scope| u8::from(scope != StartupScope::CurrentUser);
-            scope_rank(a.scope)
-                .cmp(&scope_rank(b.scope))
-                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-        });
+        let entries = &*self.startup.get_or_insert_with(load_startup);
         let mut refresh = false;
         let mut toggle: Option<(StartupScope, String, bool)> = None;
         egui::ScrollArea::vertical()
@@ -482,7 +472,7 @@ impl ToolkitApp {
                 if entries.is_empty() {
                     ui.label(RichText::new("No startup entries found.").color(theme::MUTED));
                 }
-                for entry in &entries {
+                for entry in entries {
                     if let Some(change) = startup_card(ui, entry) {
                         toggle = Some((entry.scope, entry.name.clone(), change));
                     }
@@ -490,62 +480,13 @@ impl ToolkitApp {
                 }
             });
         if refresh {
-            self.startup = Some(toolkit_platform::list_startup());
+            self.startup = Some(load_startup());
         }
         if let Some((scope, name, enabled)) = toggle {
             match toolkit_platform::set_startup_enabled(scope, &name, enabled) {
-                Ok(()) => self.startup = Some(toolkit_platform::list_startup()),
+                Ok(()) => self.startup = Some(load_startup()),
                 Err(message) => self.show_error("Startup", message),
             }
-        }
-    }
-
-    fn draw_operation_section(&mut self, ui: &mut egui::Ui, title: &str, ops: &[Operation]) {
-        let running = self.is_running();
-        let mut clicked: Option<Operation> = None;
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                ui.heading(title);
-                ui.add_space(theme::SPACE_MD);
-                for operation in ops {
-                    if operation_card(ui, operation, running) {
-                        clicked = Some(operation.clone());
-                    }
-                    ui.add_space(theme::SPACE_SM);
-                }
-            });
-        if let Some(operation) = clicked {
-            self.on_operation_clicked(operation);
-        }
-    }
-
-    fn draw_health(&mut self, ui: &mut egui::Ui, groups: &[(&'static str, Vec<Operation>)]) {
-        let running = self.is_running();
-        let mut clicked: Option<Operation> = None;
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                ui.heading("Health & Repair");
-                ui.add_space(theme::SPACE_MD);
-                for (group, ops) in groups {
-                    ui.label(
-                        RichText::new(*group)
-                            .family(theme::bold())
-                            .color(theme::MUTED),
-                    );
-                    ui.add_space(theme::SPACE_XS);
-                    for operation in ops {
-                        if operation_card(ui, operation, running) {
-                            clicked = Some(operation.clone());
-                        }
-                        ui.add_space(theme::SPACE_SM);
-                    }
-                    ui.add_space(theme::SPACE_SM);
-                }
-            });
-        if let Some(operation) = clicked {
-            self.on_operation_clicked(operation);
         }
     }
 
@@ -650,10 +591,10 @@ impl ToolkitApp {
     }
 
     fn draw_confirm(&mut self, ctx: &egui::Context) {
-        let Some(operation) = self.confirm.clone() else {
+        let running = self.is_running();
+        let Some(operation) = &self.confirm else {
             return;
         };
-        let running = self.is_running();
         let mut run = false;
         let mut cancel = false;
         egui::Window::new("Confirm operation")
@@ -692,8 +633,9 @@ impl ToolkitApp {
                 });
             });
         if run {
-            self.confirm = None;
-            self.start(operation);
+            if let Some(operation) = self.confirm.take() {
+                self.start(operation);
+            }
         } else if cancel {
             self.confirm = None;
         }
@@ -738,6 +680,18 @@ fn startup_card(ui: &mut egui::Ui, entry: &StartupEntry) -> Option<bool> {
             });
         });
     toggled
+}
+
+/// Lists startup entries with this user's first, each group by name.
+fn load_startup() -> Vec<StartupEntry> {
+    let mut entries = toolkit_platform::list_startup();
+    entries.sort_by(|a, b| {
+        let scope_rank = |scope| u8::from(scope != StartupScope::CurrentUser);
+        scope_rank(a.scope)
+            .cmp(&scope_rank(b.scope))
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+    entries
 }
 
 /// Whether the Windows Sandbox optional feature appears to be installed.
@@ -785,6 +739,66 @@ fn info_row(ui: &mut egui::Ui, label: &str, value: &str) {
 fn needs_confirmation(operation: &Operation) -> bool {
     operation.elevation == Elevation::Administrator
         || matches!(operation.risk, Risk::Medium | Risk::High)
+}
+
+/// Draws a titled section of operation cards. Returns the operation whose
+/// action was clicked.
+fn operation_section(
+    ui: &mut egui::Ui,
+    title: &str,
+    ops: &[Operation],
+    running: bool,
+) -> Option<Operation> {
+    let mut clicked = None;
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.heading(title);
+            ui.add_space(theme::SPACE_MD);
+            clicked = operation_cards(ui, ops, running);
+        });
+    clicked
+}
+
+/// Draws the Health & Repair section, one labelled group of cards at a time.
+/// Returns the operation whose action was clicked.
+fn health_section(
+    ui: &mut egui::Ui,
+    groups: &[(&'static str, Vec<Operation>)],
+    running: bool,
+) -> Option<Operation> {
+    let mut clicked = None;
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.heading("Health & Repair");
+            ui.add_space(theme::SPACE_MD);
+            for (group, ops) in groups {
+                ui.label(
+                    RichText::new(*group)
+                        .family(theme::bold())
+                        .color(theme::MUTED),
+                );
+                ui.add_space(theme::SPACE_XS);
+                if let Some(operation) = operation_cards(ui, ops, running) {
+                    clicked = Some(operation);
+                }
+                ui.add_space(theme::SPACE_SM);
+            }
+        });
+    clicked
+}
+
+/// Draws a card per operation. Returns the operation whose action was clicked.
+fn operation_cards(ui: &mut egui::Ui, ops: &[Operation], running: bool) -> Option<Operation> {
+    let mut clicked = None;
+    for operation in ops {
+        if operation_card(ui, operation, running) {
+            clicked = Some(operation.clone());
+        }
+        ui.add_space(theme::SPACE_SM);
+    }
+    clicked
 }
 
 /// Draws one operation as a card and returns whether its action was clicked.
