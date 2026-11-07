@@ -19,6 +19,13 @@ impl StartupScope {
             StartupScope::LocalMachine => "All users",
         }
     }
+
+    /// Whether this app can toggle entries in the scope without elevation
+    /// (current-user entries only).
+    #[must_use]
+    pub fn can_toggle(self) -> bool {
+        self == StartupScope::CurrentUser
+    }
 }
 
 /// A program registered to run at sign-in.
@@ -32,7 +39,4 @@ pub struct StartupEntry {
     pub scope: StartupScope,
     /// Whether the entry is currently enabled.
     pub enabled: bool,
-    /// Whether this app can toggle the entry without elevation (current-user
-    /// entries only).
-    pub can_toggle: bool,
 }

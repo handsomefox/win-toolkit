@@ -28,7 +28,7 @@ pub fn list_startup() -> Vec<StartupEntry> {
 /// Returns an error message if the entry is machine-wide (needs elevation), on
 /// non-Windows platforms, or if the registry write fails.
 pub fn set_startup_enabled(scope: StartupScope, name: &str, enabled: bool) -> Result<(), String> {
-    if scope != StartupScope::CurrentUser {
+    if !scope.can_toggle() {
         return Err("machine-wide startup entries require Administrator".to_owned());
     }
     #[cfg(windows)]
@@ -78,7 +78,6 @@ mod imp {
                     command,
                     scope,
                     enabled,
-                    can_toggle: scope == StartupScope::CurrentUser,
                 }
             })
             .collect()
@@ -104,5 +103,18 @@ mod imp {
         approved
             .set_bytes(name, Type::Bytes, &blob)
             .map_err(|err| err.message())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn machine_wide_entries_are_refused_without_a_registry_write() {
+        assert_eq!(
+            set_startup_enabled(StartupScope::LocalMachine, "Example", false),
+            Err("machine-wide startup entries require Administrator".to_owned())
+        );
     }
 }

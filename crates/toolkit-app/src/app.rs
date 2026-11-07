@@ -649,7 +649,7 @@ fn startup_card(ui: &mut egui::Ui, entry: &StartupEntry) -> Option<bool> {
                 ui.label(RichText::new(&entry.name).family(theme::bold()));
                 ui.label(RichText::new(&entry.command).color(theme::MUTED));
                 ui.label(RichText::new(entry.scope.label()).color(theme::MUTED));
-                if !entry.can_toggle {
+                if !entry.scope.can_toggle() {
                     ui.label(
                         RichText::new("System-wide; requires Administrator to change")
                             .color(theme::MUTED),
@@ -660,7 +660,7 @@ fn startup_card(ui: &mut egui::Ui, entry: &StartupEntry) -> Option<bool> {
                 let mut enabled = entry.enabled;
                 if ui
                     .add_enabled(
-                        entry.can_toggle,
+                        entry.scope.can_toggle(),
                         egui::Checkbox::new(&mut enabled, "Enabled"),
                     )
                     .changed()
