@@ -248,8 +248,8 @@ fn create_restore_point() -> Operation {
 /// PowerShell that creates a restore point and reports the real outcome:
 /// success, the "no restore point created" cases (24-hour frequency limit via
 /// the warning stream, or one already present), or the error when System
-/// Protection is off. This makes a silent no-op impossible. The error exits
-/// with code 1, so the run is reported as failed.
+/// Protection is off. This makes a silent no-op impossible. Every outcome but
+/// success exits with code 1, so the run is reported as failed.
 const RESTORE_POINT_SCRIPT: &str = concat!(
     "powershell -NoProfile -ExecutionPolicy Bypass -Command ",
     "\"try { ",
@@ -258,9 +258,9 @@ const RESTORE_POINT_SCRIPT: &str = concat!(
     "-WarningVariable w -WarningAction SilentlyContinue; ",
     "$a = @(Get-ComputerRestorePoint).Count; ",
     "if ($a -gt $b) { 'Restore point created successfully.' } ",
-    "elseif ($w) { 'No restore point created: ' + ($w -join '; ') } ",
+    "elseif ($w) { 'No restore point created: ' + ($w -join '; '); exit 1 } ",
     "else { 'No restore point created. A recent one may already exist, ",
-    "or System Protection is off for the system drive.' } ",
+    "or System Protection is off for the system drive.'; exit 1 } ",
     "} catch { 'Could not create a restore point: ' + $_.Exception.Message; exit 1 }\"",
 );
 
@@ -627,6 +627,10 @@ mod tests {
         assert!(script.ends_with(
             "} catch { 'Could not create a restore point: ' + $_.Exception.Message; exit 1 }\""
         ));
+        // Both "no restore point created" branches fail the run too; only the
+        // success branch exits 0.
+        assert_eq!(script.matches("exit 1").count(), 3);
+        assert!(script.contains("{ 'Restore point created successfully.' }"));
     }
 
     #[test]
