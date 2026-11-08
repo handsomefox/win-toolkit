@@ -35,7 +35,7 @@ Before a privileged operation runs, the app shows what it does, roughly how long
 
 ![The confirmation for System File Checker, warning that it asks for administrator rights and cannot be cancelled](docs/confirm.png)
 
-The long repair operations, `sfc` and `DISM`, are not cancelable, because interrupting them mid-run can leave the component store inconsistent. Their output streams to the log view and to the diagnostics log as it arrives.
+The long repair operations, `sfc` and `DISM`, are not cancelable, because interrupting them mid-run can leave the component store inconsistent. Their output streams to the log view as it arrives, and each run saves it to a file in `%LOCALAPPDATA%\win-toolkit\runs\`. The diagnostics log records when each operation starts and finishes, and any failure.
 
 ## Install
 
