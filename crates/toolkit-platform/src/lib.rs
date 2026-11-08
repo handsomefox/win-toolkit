@@ -5,8 +5,6 @@
 //! environment variables) so the workspace builds and tests run on Linux.
 
 pub mod exec;
-#[cfg(windows)]
-mod known_folders;
 pub mod paths;
 pub mod startup;
 pub mod sysinfo;

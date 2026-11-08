@@ -188,14 +188,13 @@ pub(crate) struct ToolkitApp {
 const UPDATE_SETTINGS_KEY: &str = "app_updates";
 
 impl ToolkitApp {
-    pub(crate) fn new(cc: &eframe::CreationContext<'_>, log_path: Option<&Path>) -> Self {
+    pub(crate) fn new(cc: &eframe::CreationContext<'_>, logs_dir: Option<PathBuf>) -> Self {
         egui_extras::install_image_loaders(&cc.egui_ctx);
         theme::apply(&cc.egui_ctx);
         let update_settings = cc
             .storage
             .and_then(|storage| eframe::get_value(storage, UPDATE_SETTINGS_KEY))
             .unwrap_or_default();
-        let logs_dir = log_path.and_then(Path::parent).map(Path::to_path_buf);
         Self {
             updater: app_update::Updater::new(crate::APP_INFO, {
                 let ctx = cc.egui_ctx.clone();
@@ -575,10 +574,13 @@ impl ToolkitApp {
         ui.hyperlink("https://github.com/handsomefox/win-toolkit");
         ui.add_space(theme::SPACE_SM);
         if ui
-            .button("App updates…")
-            .on_hover_text("Check for a new version and choose how often to check")
+            .button("Check for updates")
+            .on_hover_text("Check GitHub for a new version now, and choose how often to check")
             .clicked()
         {
+            // The label promises a check, so start one as the window opens.
+            // The updater leaves a running check or download alone.
+            self.updater.check_now();
             self.update_open = true;
         }
         ui.add_space(theme::SPACE_MD);

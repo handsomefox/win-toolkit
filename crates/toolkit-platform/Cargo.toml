@@ -10,6 +10,7 @@ description = "Windows platform integration for win-toolkit: known folders, app-
 workspace = true
 
 [dependencies]
+app-folders.workspace = true
 toolkit-core = { version = "=0.4.4", path = "../toolkit-core" }
 thiserror.workspace = true
 
@@ -18,7 +19,6 @@ windows = { version = "=0.62.2", features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",
     "Win32_UI_Shell",
-    "Win32_System_Com",
     "Win32_System_Registry",
     "Win32_System_SystemInformation",
     "Win32_System_Threading",

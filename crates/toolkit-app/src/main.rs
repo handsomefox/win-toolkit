@@ -6,7 +6,6 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod app;
-mod diagnostics;
 mod theme;
 mod update;
 mod worker;
@@ -14,10 +13,14 @@ mod worker;
 use eframe::egui;
 
 fn main() -> eframe::Result {
-    let log_path = diagnostics::init();
+    let logs_dir = app_diagnostics::init(
+        toolkit_platform::logs_dir().as_deref(),
+        toolkit_core::APP_SLUG,
+        "info",
+    );
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "win-toolkit starting");
-    if let Some(path) = &log_path {
-        tracing::info!("logging to {}", path.display());
+    if let Some(dir) = &logs_dir {
+        tracing::info!("logging to {}", dir.display());
     }
 
     let options = eframe::NativeOptions {
@@ -31,7 +34,7 @@ fn main() -> eframe::Result {
     let result = eframe::run_native(
         toolkit_core::APP_TITLE,
         options,
-        Box::new(move |cc| Ok(Box::new(app::ToolkitApp::new(cc, log_path.as_deref())))),
+        Box::new(move |cc| Ok(Box::new(app::ToolkitApp::new(cc, logs_dir)))),
     );
     // eframe saves the app's state before `run_native` returns, so the
     // updated copy starts from everything this one knew.
@@ -43,6 +46,7 @@ fn main() -> eframe::Result {
 
 /// Where this app's releases are published.
 const APP_INFO: app_update::AppInfo = app_update::AppInfo {
+    name: toolkit_core::APP_TITLE,
     owner: "handsomefox",
     repo: "win-toolkit",
     bin: "win-toolkit",

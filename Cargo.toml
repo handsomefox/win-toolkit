@@ -14,7 +14,10 @@ repository = "https://github.com/handsomefox/win-toolkit"
 description = "A Windows desktop app for system inspection, diagnostics, and documented maintenance"
 
 [workspace.dependencies]
-app-update = { git = "https://github.com/handsomefox/app-update", tag = "v0.1.0", version = "=0.1.0" }
+app-diagnostics = { git = "https://github.com/handsomefox/app-internals", tag = "v0.2.0", version = "=0.2.0" }
+app-folders = { git = "https://github.com/handsomefox/app-internals", tag = "v0.2.0", version = "=0.2.0" }
+app-update = { git = "https://github.com/handsomefox/app-internals", tag = "v0.2.0", version = "=0.2.0" }
+app-update-ui = { git = "https://github.com/handsomefox/app-internals", tag = "v0.2.0", version = "=0.2.0" }
 crossbeam-channel = "=0.5.17"
 eframe = { version = "=0.37.0", default-features = false, features = ["clipboard", "default_fonts", "glow", "links", "persistence", "x11"] }
 egui_extras = { version = "=0.37.0", features = ["image"] }
@@ -23,7 +26,6 @@ jiff = { version = "=0.2.38", features = ["serde"] }
 tempfile = "=3.27.0"
 thiserror = "=2.0.21"
 tracing = "=0.1.44"
-tracing-subscriber = { version = "=0.3.23", features = ["env-filter"] }
 
 [profile.release]
 lto = "thin"
