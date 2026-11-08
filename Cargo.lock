@@ -3189,7 +3189,7 @@ checksum = "7d56353a2a665ad0f41a421187180aab746c8c325620617ad883a99a1cbe66d2"
 
 [[package]]
 name = "toolkit-app"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "app-update",
  "crossbeam-channel",
@@ -3207,11 +3207,11 @@ dependencies = [
 
 [[package]]
 name = "toolkit-core"
-version = "0.4.3"
+version = "0.4.4"
 
 [[package]]
 name = "toolkit-platform"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "thiserror 2.0.21",
  "toolkit-core",

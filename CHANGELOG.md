@@ -2,6 +2,11 @@
 
 Releases before 0.2.4 are listed on the [releases page](https://github.com/handsomefox/win-toolkit/releases).
 
+## 0.4.4
+
+- Get the self-updater from its own repository, [handsomefox/app-update](https://github.com/handsomefox/app-update), instead of a copy
+  inside this app. Checking for, downloading, and installing an update work as before.
+
 ## 0.4.3
 
 - Keep a running operation in the output panel until it finishes. **Dismiss** and four other
