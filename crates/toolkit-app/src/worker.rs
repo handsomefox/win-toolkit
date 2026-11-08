@@ -6,7 +6,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crossbeam_channel::{Receiver, Sender};
+use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use eframe::egui;
 use toolkit_core::{
     CommandLine, Elevation, Execution, Operation, compact_lines, console_lines,
@@ -58,12 +58,24 @@ pub(crate) struct Worker {
 }
 
 impl Worker {
-    pub(crate) fn send(&self, command: Command) {
-        let _ = self.commands.send(command);
+    /// Hands `command` to the worker thread. Returns false if the thread has
+    /// stopped.
+    pub(crate) fn send(&self, command: Command) -> bool {
+        self.commands.send(command).is_ok()
     }
 
-    pub(crate) fn try_recv(&self) -> Option<Event> {
-        self.events.try_recv().ok()
+    /// The next waiting event. `Disconnected` means the worker thread has
+    /// stopped and every event it sent has been read.
+    pub(crate) fn try_recv(&self) -> Result<Event, TryRecvError> {
+        self.events.try_recv()
+    }
+
+    /// A worker whose thread has already stopped.
+    #[cfg(test)]
+    pub(crate) fn stopped() -> Self {
+        let (commands, _) = crossbeam_channel::unbounded();
+        let (_, events) = crossbeam_channel::bounded(1);
+        Worker { commands, events }
     }
 }
 

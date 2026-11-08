@@ -3,6 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
+use crossbeam_channel::TryRecvError;
 use eframe::egui::{self, RichText};
 use toolkit_core::{
     Elevation, Operation, Risk, SandboxConfig, StartupEntry, StartupScope, SystemInfo,
@@ -123,6 +124,29 @@ impl RunPanel {
         }
     }
 
+    /// Applies every waiting worker event. If the worker thread has stopped
+    /// (a panic, which the log records), the run it left behind fails.
+    fn drain(&mut self, worker: &Worker) {
+        loop {
+            match worker.try_recv() {
+                Ok(event) => self.apply(event),
+                Err(TryRecvError::Empty) => return,
+                Err(TryRecvError::Disconnected) => {
+                    self.worker_stopped();
+                    return;
+                }
+            }
+        }
+    }
+
+    fn worker_stopped(&mut self) {
+        if self.is_running() {
+            self.apply(Event::Finished(Outcome::Error(
+                "the background worker stopped; the diagnostics log has the details".to_owned(),
+            )));
+        }
+    }
+
     /// Applies a worker event to the running operation.
     fn apply(&mut self, event: Event) {
         let Some(run) = self
@@ -199,12 +223,6 @@ impl ToolkitApp {
         self.run.is_running()
     }
 
-    fn drain_events(&mut self) {
-        while let Some(event) = self.worker.try_recv() {
-            self.run.apply(event);
-        }
-    }
-
     fn on_operation_clicked(&mut self, operation: Operation) {
         if needs_confirmation(&operation) {
             self.confirm = Some(operation);
@@ -215,7 +233,9 @@ impl ToolkitApp {
 
     fn start(&mut self, operation: Operation) {
         if self.run.show(RunView::running(&operation)) {
-            self.worker.send(Command::Run(operation));
+            if !self.worker.send(Command::Run(operation)) {
+                self.run.worker_stopped();
+            }
         } else {
             tracing::warn!(
                 operation = operation.id,
@@ -869,7 +889,7 @@ fn build_diagnostics(logs_dir: Option<&Path>) -> Vec<Operation> {
 impl eframe::App for ToolkitApp {
     fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = root.ctx().clone();
-        self.drain_events();
+        self.run.drain(&self.worker);
         self.updater.poll(&mut self.update_settings);
         self.draw_header(root);
         self.draw_sidebar(root);
@@ -927,6 +947,20 @@ mod tests {
 
         assert!(panel.show(RunView::running(&operation("second"))));
         assert_eq!(panel.view().map(|run| run.label), Some("second"));
+    }
+
+    #[test]
+    fn a_stopped_worker_fails_the_run_it_left_behind() {
+        let worker = Worker::stopped();
+        let mut panel = RunPanel::default();
+        assert!(panel.show(RunView::running(&operation("first"))));
+        panel.drain(&worker);
+        assert!(!panel.is_running());
+        assert!(matches!(
+            panel.view().unwrap().status,
+            RunStatus::Finished(Outcome::Error(_))
+        ));
+        assert!(!worker.send(Command::Run(operation("second"))));
     }
 
     #[test]
