@@ -248,7 +248,8 @@ fn create_restore_point() -> Operation {
 /// PowerShell that creates a restore point and reports the real outcome:
 /// success, the "no restore point created" cases (24-hour frequency limit via
 /// the warning stream, or one already present), or the error when System
-/// Protection is off. This makes a silent no-op impossible.
+/// Protection is off. This makes a silent no-op impossible. The error exits
+/// with code 1, so the run is reported as failed.
 const RESTORE_POINT_SCRIPT: &str = concat!(
     "powershell -NoProfile -ExecutionPolicy Bypass -Command ",
     "\"try { ",
@@ -260,7 +261,7 @@ const RESTORE_POINT_SCRIPT: &str = concat!(
     "elseif ($w) { 'No restore point created: ' + ($w -join '; ') } ",
     "else { 'No restore point created. A recent one may already exist, ",
     "or System Protection is off for the system drive.' } ",
-    "} catch { 'Could not create a restore point: ' + $_.Exception.Message }\"",
+    "} catch { 'Could not create a restore point: ' + $_.Exception.Message; exit 1 }\"",
 );
 
 /// The Network catalog: DNS/stack resets and configuration display.
@@ -615,6 +616,17 @@ mod tests {
             assert_eq!(op.elevation, Elevation::Administrator);
             assert_eq!(op.risk, Risk::Medium);
         }
+    }
+
+    #[test]
+    fn restore_point_errors_exit_non_zero() {
+        let op = create_restore_point();
+        let Execution::Capture(CommandLine::Script(script)) = &op.execution else {
+            panic!("the restore point runs as a captured script");
+        };
+        assert!(script.ends_with(
+            "} catch { 'Could not create a restore point: ' + $_.Exception.Message; exit 1 }\""
+        ));
     }
 
     #[test]

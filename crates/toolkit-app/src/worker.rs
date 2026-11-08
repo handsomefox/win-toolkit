@@ -310,6 +310,12 @@ mod tests {
     use std::io::Write;
 
     #[test]
+    fn only_exit_code_zero_is_success() {
+        assert!(matches!(Outcome::from_exit_code(0), Outcome::Success));
+        assert!(matches!(Outcome::from_exit_code(1), Outcome::Failed(1)));
+    }
+
+    #[test]
     fn tail_reads_changes_and_handles_truncation() {
         let mut file = tempfile::NamedTempFile::new().unwrap();
         let mut tail = LogTail::default();
