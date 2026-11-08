@@ -2,6 +2,18 @@
 
 Releases before 0.2.4 are listed on the [releases page](https://github.com/handsomefox/win-toolkit/releases).
 
+## 0.4.3
+
+- Keep a running operation in the output panel until it finishes. **Dismiss** and four other
+  buttons could clear it mid-run, which unlocked **Restart to update** during `sfc` or `DISM`.
+- Report **Create a System Restore point** as failed when Windows does not create one. It
+  reported success.
+- Fail the running operation when the background worker stops unexpectedly. The panel showed
+  "Running…" forever.
+- Label the **Open logs folder** run from **About** the same way as the one in **Diagnostics**.
+- Refuse an app update whose checksum on GitHub cannot be read, instead of skipping that check.
+- Retry putting the current version back when installing an app update fails.
+
 ## 0.4.2
 
 - New installs check for a new version each time the app starts. Existing installs keep their
