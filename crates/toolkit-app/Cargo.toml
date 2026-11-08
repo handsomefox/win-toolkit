@@ -14,7 +14,7 @@ name = "win-toolkit"
 path = "src/main.rs"
 
 [dependencies]
-app-update = { version = "=0.4.3", path = "../app-update" }
+app-update.workspace = true
 toolkit-core = { version = "=0.4.3", path = "../toolkit-core" }
 toolkit-platform = { version = "=0.4.3", path = "../toolkit-platform" }
 crossbeam-channel.workspace = true
