@@ -2,6 +2,11 @@
 
 Releases before 0.2.4 are listed on the [releases page](https://github.com/handsomefox/win-toolkit/releases).
 
+## 0.4.6
+
+- Report **Create a System Restore point** as failed when Windows creates no restore point, for
+  example within 24 hours of the last one. 0.4.5 still reported those runs as successful.
+
 ## 0.4.5
 
 - **Check for updates** in **About** checks GitHub right away as it opens the update window. It
