@@ -104,6 +104,9 @@ mod imp {
     use std::os::windows::process::CommandExt as _;
 
     use windows::Win32::Foundation::{CloseHandle, ERROR_CANCELLED, GetLastError, HANDLE};
+    use windows::Win32::System::Com::{
+        COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, CoInitializeEx, CoUninitialize,
+    };
     use windows::Win32::System::Threading::GetExitCodeProcess;
     use windows::Win32::UI::Shell::{
         SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW, ShellExecuteW,
@@ -112,6 +115,40 @@ mod imp {
     use windows::core::{HSTRING, PCWSTR, w};
 
     use super::{CaptureOutput, ExecError};
+
+    /// COM initialized on the calling thread for one shell call.
+    ///
+    /// `ShellExecute` can hand a file to a shell extension that is a COM
+    /// object, so Microsoft asks callers to initialize COM first, as a
+    /// single-threaded apartment without OLE1 DDE. These calls run on the
+    /// worker thread, which nothing else initializes.
+    struct ComApartment {
+        /// Whether this guard's `CoInitializeEx` succeeded and so must be
+        /// balanced. A thread that already chose another apartment keeps it.
+        initialized: bool,
+    }
+
+    impl ComApartment {
+        fn enter() -> Self {
+            // SAFETY: called with no reserved pointer; the result is checked
+            // and balanced in `Drop` only when it succeeded.
+            let result =
+                unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) };
+            Self {
+                initialized: result.is_ok(),
+            }
+        }
+    }
+
+    impl Drop for ComApartment {
+        fn drop(&mut self) {
+            if self.initialized {
+                // SAFETY: balances the successful `CoInitializeEx` in `enter`
+                // on the same thread.
+                unsafe { CoUninitialize() };
+            }
+        }
+    }
 
     /// Runs a child process without flashing a console window.
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -191,6 +228,7 @@ mod imp {
             ..Default::default()
         };
 
+        let _com = ComApartment::enter();
         // SAFETY: `info` is fully initialized and its string pointers reference
         // `file`/`parameters`, which outlive this call.
         let launched = unsafe { ShellExecuteExW(&raw mut info) };
@@ -238,6 +276,7 @@ mod imp {
             PCWSTR(parameters.as_ptr())
         };
 
+        let _com = ComApartment::enter();
         // SAFETY: `file`/`parameters` outlive the call and the pointers are
         // valid; a null directory and default show command are accepted.
         let instance = unsafe {
