@@ -13,7 +13,7 @@ The app has seven sections.
 
 **Overview.** A read-only summary of the system and hardware: OS build, uptime, CPU, memory, and free space per drive. You can export it as text for a support request.
 
-**Health & Repair.** `sfc /scannow`, `DISM /RestoreHealth`, `chkdsk C: /scan`, analysis and cleanup of the WinSxS component store, Reset Windows Update, and Create a System Restore point. Each is a separate action with its own description and confirmation.
+**Health & Repair.** `sfc /scannow`, `DISM /RestoreHealth`, `chkdsk /scan` on the Windows drive, analysis and cleanup of the WinSxS component store, Reset Windows Update, and Create a System Restore point. Each is a separate action with its own description and confirmation.
 
 **Network.** Flush the DNS resolver cache, reset the Winsock catalog, reset the TCP/IP stack, release or renew the IP address, and view `ipconfig /all`.
 

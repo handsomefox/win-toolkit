@@ -132,14 +132,16 @@ fn dism_restore_health() -> Operation {
 fn chkdsk_scan() -> Operation {
     Operation {
         id: "chkdsk-scan",
-        label: "Check system drive (chkdsk C: /scan)",
-        description: "Scans the system drive for file-system errors online, without locking it or \
-                      requiring a reboot. Reports problems it finds.",
+        label: "Check system drive (chkdsk /scan)",
+        description: "Scans the drive Windows is installed on for file-system errors online, \
+                      without locking it or requiring a reboot. Reports problems it finds.",
         duration_hint: "Usually a few minutes",
         risk: Risk::Medium,
         elevation: Elevation::Administrator,
         cancelable: false,
-        execution: Execution::Capture(CommandLine::program("chkdsk", &["C:", "/scan"])),
+        // Elevated captures run through `cmd.exe`, which expands
+        // `%SystemDrive%` to the drive Windows is installed on.
+        execution: Execution::Capture(CommandLine::program("chkdsk", &["%SystemDrive%", "/scan"])),
     }
 }
 
@@ -631,6 +633,23 @@ mod tests {
         // success branch exits 0.
         assert_eq!(script.matches("exit 1").count(), 3);
         assert!(script.contains("{ 'Restore point created successfully.' }"));
+    }
+
+    #[test]
+    fn chkdsk_checks_the_drive_windows_is_on() {
+        let op = health_groups()
+            .into_iter()
+            .flat_map(|(_, ops)| ops)
+            .find(|op| op.id == "chkdsk-scan")
+            .unwrap();
+        assert!(!op.label.contains("C:"));
+        let Execution::Capture(command) = &op.execution else {
+            panic!("chkdsk runs as a captured command");
+        };
+        assert_eq!(
+            crate::command::elevated_cmd_parameters(command, r"C:\out.txt"),
+            r#"/d /c "(chkdsk %SystemDrive% /scan) > "C:\out.txt" 2>&1""#
+        );
     }
 
     #[test]
