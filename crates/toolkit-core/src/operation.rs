@@ -252,14 +252,20 @@ fn create_restore_point() -> Operation {
 /// the warning stream, or one already present), or the error when System
 /// Protection is off. This makes a silent no-op impossible. Every outcome but
 /// success exits with code 1, so the run is reported as failed.
+///
+/// A point counts as new when its sequence number is higher than any before
+/// the run and it carries this app's description. Counting points instead
+/// would miss one, because Windows can delete the oldest point to make room.
 const RESTORE_POINT_SCRIPT: &str = concat!(
     "powershell -NoProfile -ExecutionPolicy Bypass -Command ",
     "\"try { ",
-    "$b = @(Get-ComputerRestorePoint).Count; ",
+    "$b = (Get-ComputerRestorePoint | Measure-Object -Property SequenceNumber -Maximum).Maximum; ",
+    "if ($null -eq $b) { $b = 0 }; ",
     "Checkpoint-Computer -Description 'Windows Toolkit' -RestorePointType MODIFY_SETTINGS ",
     "-WarningVariable w -WarningAction SilentlyContinue; ",
-    "$a = @(Get-ComputerRestorePoint).Count; ",
-    "if ($a -gt $b) { 'Restore point created successfully.' } ",
+    "$a = @(Get-ComputerRestorePoint | Where-Object { $_.SequenceNumber -gt $b -and ",
+    "$_.Description -eq 'Windows Toolkit' }); ",
+    "if ($a.Count -gt 0) { 'Restore point created successfully.' } ",
     "elseif ($w) { 'No restore point created: ' + ($w -join '; '); exit 1 } ",
     "else { 'No restore point created. A recent one may already exist, ",
     "or System Protection is off for the system drive.'; exit 1 } ",
@@ -633,6 +639,16 @@ mod tests {
         // success branch exits 0.
         assert_eq!(script.matches("exit 1").count(), 3);
         assert!(script.contains("{ 'Restore point created successfully.' }"));
+        // Success is judged by a new sequence number, not by the count.
+        assert!(script.contains("SequenceNumber -gt $b"));
+        assert!(!script.contains(".Count; "));
+        // The script sits inside `cmd.exe`'s double-quoted `/c` argument.
+        assert!(
+            !script
+                .trim_start_matches(r#"powershell -NoProfile -ExecutionPolicy Bypass -Command ""#)
+                .trim_end_matches('"')
+                .contains('"')
+        );
     }
 
     #[test]
