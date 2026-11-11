@@ -17,8 +17,8 @@ path = "src/main.rs"
 app-diagnostics.workspace = true
 app-update.workspace = true
 app-update-ui.workspace = true
-toolkit-core = { version = "=0.4.6", path = "../toolkit-core" }
-toolkit-platform = { version = "=0.4.6", path = "../toolkit-platform" }
+toolkit-core = { version = "=0.4.7", path = "../toolkit-core" }
+toolkit-platform = { version = "=0.4.7", path = "../toolkit-platform" }
 crossbeam-channel.workspace = true
 eframe.workspace = true
 egui_extras.workspace = true

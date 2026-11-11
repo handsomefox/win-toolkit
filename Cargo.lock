@@ -3217,7 +3217,7 @@ checksum = "7d56353a2a665ad0f41a421187180aab746c8c325620617ad883a99a1cbe66d2"
 
 [[package]]
 name = "toolkit-app"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "app-diagnostics",
  "app-update",
@@ -3236,11 +3236,11 @@ dependencies = [
 
 [[package]]
 name = "toolkit-core"
-version = "0.4.6"
+version = "0.4.7"
 
 [[package]]
 name = "toolkit-platform"
-version = "0.4.6"
+version = "0.4.7"
 dependencies = [
  "app-folders",
  "thiserror 2.0.21",

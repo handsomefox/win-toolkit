@@ -2,6 +2,17 @@
 
 Releases before 0.2.4 are listed on the [releases page](https://github.com/handsomefox/win-toolkit/releases).
 
+## 0.4.7
+
+- **Check system drive** checks the drive Windows is installed on. It always checked `C:`, so a
+  Windows installed on another drive was never checked.
+- **Create a System Restore point** reports success when Windows makes room for the new point by
+  deleting the oldest one. Those runs were reported as failed.
+- Open programs, files, and folders with COM initialized first, as Microsoft asks of callers of
+  the Windows shell. Some file types open through shell extensions that need it.
+- Opening a second copy of the app while the first has an update waiting no longer deletes the
+  first copy's download.
+
 ## 0.4.6
 
 - Report **Create a System Restore point** as failed when Windows creates no restore point, for
