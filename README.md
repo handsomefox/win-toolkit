@@ -41,7 +41,7 @@ The long repair operations, `sfc` and `DISM`, are not cancelable, because interr
 
 Download the latest release from the [releases page](https://github.com/handsomefox/win-toolkit/releases). Unpack `win-toolkit-<version>-windows-x86_64.zip` and run `win-toolkit.exe` from the folder inside it. `SHA256SUMS` beside the archive holds its checksum.
 
-The app runs on Windows 10 and 11, x86-64.
+The app runs on Windows 10 and 11, x86-64. It needs the Microsoft Visual C++ Redistributable for x64, which most Windows installations already have. If Windows reports that `VCRUNTIME140.dll` was not found, install the [latest supported redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist).
 
 ## Updates
 
