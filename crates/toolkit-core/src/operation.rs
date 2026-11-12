@@ -213,13 +213,20 @@ fn reset_windows_update() -> Operation {
 
 // Stop on reset failures, but always attempt to restart every service. Report
 // any restart failure as well, and preserve failure in the process exit code.
+//
+// Application Identity and the AppLocker filter depend on the Cryptographic
+// service, and Stop-Service refuses to stop a service whose dependents run
+// unless -Force stops those too. The ones that were running are started again
+// afterwards.
 const RESET_UPDATE_SCRIPT: &str = concat!(
     "$failed = $false; ",
     "$services = @('wuauserv', 'bits', 'cryptsvc'); ",
+    "$dependents = @((Get-Service -Name cryptsvc).DependentServices | ",
+    "Where-Object { $_.Status -eq 'Running' } | ForEach-Object { $_.Name }); ",
     "try { ",
     "foreach ($service in $services) { ",
     "Write-Output ('Stopping ' + $service); ",
-    "Stop-Service -Name $service -ErrorAction Stop }; ",
+    "Stop-Service -Name $service -Force -ErrorAction Stop }; ",
     // An earlier reset left .old folders behind. Nothing is deleted, so pick
     // the first suffix free for both folders: .old, then .old1, .old2, ...
     "$suffix = 'old'; $n = 0; ",
@@ -232,7 +239,7 @@ const RESET_UPDATE_SCRIPT: &str = concat!(
     "Rename-Item -LiteralPath ($env:SystemRoot + '\\System32\\catroot2') ",
     "-NewName ('catroot2.' + $suffix) -ErrorAction Stop; ",
     "} catch { $failed = $true; Write-Output ('Reset failed: ' + $_.Exception.Message) } ",
-    "finally { foreach ($service in @('cryptsvc', 'bits', 'wuauserv')) { ",
+    "finally { foreach ($service in @('cryptsvc', 'bits', 'wuauserv') + $dependents) { ",
     "try { Write-Output ('Starting ' + $service); ",
     "Start-Service -Name $service -ErrorAction Stop } ",
     "catch { $failed = $true; Write-Output ('Restart failed: ' + $_.Exception.Message) } ",
@@ -561,8 +568,13 @@ mod tests {
         } else {
             "'restarted'"
         };
+        // One running dependent of the Cryptographic service, as Application
+        // Identity is on Windows 11.
         let script = format!(
-            "function Stop-Service {{ 'stopped' }}; function Rename-Item {{ {rename} }}; \
+            "function Get-Service {{ [pscustomobject]@{{ DependentServices = @( \
+             [pscustomobject]@{{ Name = 'AppIDSvc'; Status = 'Running' }}, \
+             [pscustomobject]@{{ Name = 'Stopped1'; Status = 'Stopped' }}) }} }}; \
+             function Stop-Service {{ 'stopped' }}; function Rename-Item {{ {rename} }}; \
              function Start-Service {{ {restart} }}; {RESET_UPDATE_SCRIPT}"
         );
         std::process::Command::new("powershell.exe")
@@ -578,7 +590,8 @@ mod tests {
             let output = simulate_update_reset(rename_fails, restart_fails);
             assert_eq!(output.status.code(), Some(1));
             let text = String::from_utf8_lossy(&output.stdout);
-            assert_eq!(text.matches("Starting ").count(), 3);
+            assert_eq!(text.matches("Starting ").count(), 4);
+            assert!(text.contains("Starting AppIDSvc"));
             assert!(!text.contains("reset completed"));
             assert!(text.contains(if rename_fails {
                 "rename blocked"
@@ -595,7 +608,8 @@ mod tests {
         assert!(output.status.success());
         let text = String::from_utf8_lossy(&output.stdout);
         assert_eq!(text.matches("renamed").count(), 2);
-        assert_eq!(text.matches("restarted").count(), 3);
+        // The three services, then the dependent that was running.
+        assert_eq!(text.matches("restarted").count(), 4);
         assert!(text.contains("reset completed"));
     }
 
@@ -604,7 +618,8 @@ mod tests {
     fn update_reset_keeps_the_folders_an_earlier_reset_left() {
         // `.old` is taken, `.old1` is free. Nothing is renamed for real.
         let script = format!(
-            "function Stop-Service {{ 'stopped' }}; \
+            "function Get-Service {{ [pscustomobject]@{{ DependentServices = @() }} }}; \
+             function Stop-Service {{ 'stopped' }}; \
              function Test-Path {{ param($LiteralPath) $LiteralPath -like '*.old' }}; \
              function Rename-Item {{ param($LiteralPath, $NewName) 'renamed to ' + $NewName }}; \
              function Start-Service {{ 'restarted' }}; {RESET_UPDATE_SCRIPT}"
