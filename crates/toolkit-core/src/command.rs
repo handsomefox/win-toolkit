@@ -211,12 +211,14 @@ mod tests {
 
     #[test]
     fn parameters_quote_arguments_that_contain_spaces() {
-        let command =
-            CommandLine::program("schtasks.exe", &["/Run", "/TN", r"\Microsoft\Windows\x"]);
+        let command = CommandLine::program(
+            "schtasks.exe",
+            &["/Run", "/TN", r"\Microsoft\Windows\Some Task", ""],
+        );
         let params = elevated_cmd_parameters(&command, r"C:\out.log");
         assert_eq!(
             params,
-            r#"/d /c "(schtasks.exe /Run /TN \Microsoft\Windows\x) > "C:\out.log" 2>&1""#
+            r#"/d /c "(schtasks.exe /Run /TN "\Microsoft\Windows\Some Task" "") > "C:\out.log" 2>&1""#
         );
     }
 
