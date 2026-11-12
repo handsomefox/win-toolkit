@@ -10,6 +10,6 @@ pub mod startup;
 pub mod sysinfo;
 
 pub use exec::{CaptureOutput, ElevatedChild, ExecError, launch, run_capture, run_elevated};
-pub use paths::{app_data_dir, logs_dir, runs_dir, sandbox_dir, system_root};
+pub use paths::{app_data_dir, logs_dir, runs_dir, sandbox_dir, system_directory, system_root};
 pub use startup::{list_startup, set_startup_enabled};
 pub use sysinfo::system_info;

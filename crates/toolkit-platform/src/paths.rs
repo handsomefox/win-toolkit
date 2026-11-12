@@ -15,6 +15,27 @@ pub fn system_root() -> String {
     std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_owned())
 }
 
+/// The Windows system directory, `C:\Windows\System32` on most machines.
+///
+/// Programs started elevated are found here by full path. A bare name such as
+/// `cmd.exe` is looked up in the current directory first, where anything could
+/// sit under that name.
+#[must_use]
+pub fn system_directory() -> PathBuf {
+    #[cfg(windows)]
+    {
+        use windows::Win32::System::SystemInformation::GetSystemDirectoryW;
+        let mut buffer = [0_u16; 260];
+        // SAFETY: the buffer is valid for its whole length, and the call
+        // writes at most that many characters.
+        let len = unsafe { GetSystemDirectoryW(Some(&mut buffer)) } as usize;
+        if len > 0 && len < buffer.len() {
+            return PathBuf::from(String::from_utf16_lossy(&buffer[..len]));
+        }
+    }
+    PathBuf::from(system_root()).join("System32")
+}
+
 /// The application's data directory: `%LOCALAPPDATA%\win-toolkit` on Windows,
 /// `$XDG_DATA_HOME/win-toolkit` or `~/.local/share/win-toolkit` elsewhere.
 #[must_use]

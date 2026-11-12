@@ -216,6 +216,9 @@ mod imp {
         // The HSTRINGs must outlive the `ShellExecuteExW` call below.
         let file = HSTRING::from(program);
         let parameters = HSTRING::from(parameters);
+        // The elevated command line names tools such as `sfc` without a
+        // path, and the shell looks in the working directory first.
+        let directory = HSTRING::from(crate::paths::system_directory().as_path());
 
         let mut info = SHELLEXECUTEINFOW {
             cbSize: u32::try_from(size_of::<SHELLEXECUTEINFOW>()).unwrap_or_default(),
@@ -224,6 +227,7 @@ mod imp {
             lpVerb: w!("runas"),
             lpFile: PCWSTR(file.as_ptr()),
             lpParameters: PCWSTR(parameters.as_ptr()),
+            lpDirectory: PCWSTR(directory.as_ptr()),
             nShow: SW_HIDE.0,
             ..Default::default()
         };

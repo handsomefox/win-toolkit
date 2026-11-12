@@ -182,7 +182,11 @@ fn run_elevated_capture(operation: &Operation, command: &CommandLine, emit: &imp
 
     let parameters = elevated_cmd_parameters(command, &output_path.to_string_lossy());
     tracing::info!(operation = operation.id, "launching elevated operation");
-    let child = match run_elevated("cmd.exe", &parameters) {
+    // By full path: a bare `cmd.exe` would be looked up in the working
+    // directory first, and whatever sits there under that name would run
+    // elevated.
+    let cmd = toolkit_platform::system_directory().join("cmd.exe");
+    let child = match run_elevated(&cmd.to_string_lossy(), &parameters) {
         Ok(child) => child,
         Err(ExecError::Declined) => {
             tracing::info!(operation = operation.id, "elevation declined");
