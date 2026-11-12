@@ -175,6 +175,9 @@ pub(crate) struct ToolkitApp {
     /// Checked once: turning the feature on takes a reboot.
     sandbox_available: bool,
     startup: Option<Vec<StartupEntry>>,
+    /// Why the last startup toggle failed. Shown in the Startup section, not
+    /// the run panel, which a running operation keeps for itself.
+    startup_error: Option<String>,
     health: Vec<(&'static str, Vec<Operation>)>,
     network: Vec<Operation>,
     performance: Vec<Operation>,
@@ -210,6 +213,7 @@ impl ToolkitApp {
             sandbox: SandboxConfig::default(),
             sandbox_available: sandbox_available(),
             startup: None,
+            startup_error: None,
             diagnostics: build_diagnostics(logs_dir.as_deref()),
             logs_dir,
             health: health_groups(),
@@ -477,6 +481,7 @@ impl ToolkitApp {
 
     fn draw_startup(&mut self, ui: &mut egui::Ui) {
         let entries = &*self.startup.get_or_insert_with(load_startup);
+        let error = self.startup_error.as_deref();
         let mut refresh = false;
         let mut toggle: Option<(StartupScope, String, bool)> = None;
         egui::ScrollArea::vertical()
@@ -490,6 +495,12 @@ impl ToolkitApp {
                         }
                     });
                 });
+                if let Some(error) = error {
+                    ui.label(
+                        RichText::new(format!("Could not change the entry: {error}"))
+                            .color(theme::DANGER),
+                    );
+                }
                 ui.add_space(theme::SPACE_MD);
                 if entries.is_empty() {
                     ui.label(RichText::new("No startup entries found.").color(theme::MUTED));
@@ -503,11 +514,18 @@ impl ToolkitApp {
             });
         if refresh {
             self.startup = Some(load_startup());
+            self.startup_error = None;
         }
         if let Some((scope, name, enabled)) = toggle {
             match toolkit_platform::set_startup_enabled(scope, &name, enabled) {
-                Ok(()) => self.startup = Some(load_startup()),
-                Err(message) => self.show_error("Startup", message),
+                Ok(()) => {
+                    self.startup = Some(load_startup());
+                    self.startup_error = None;
+                }
+                Err(message) => {
+                    tracing::warn!("Startup: {message}");
+                    self.startup_error = Some(message);
+                }
             }
         }
     }
