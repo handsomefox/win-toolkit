@@ -191,8 +191,10 @@ fn reset_windows_update() -> Operation {
         label: "Reset Windows Update",
         description: "Stops the Windows Update, BITS, and Cryptographic services, renames the \
                       SoftwareDistribution and catroot2 folders to .old (they are rebuilt \
-                      automatically; nothing is deleted), then restarts the services. Use this \
-                      when Windows Update is stuck or failing. A reboot afterwards is recommended.",
+                      automatically; nothing is deleted), then restarts the services. When an \
+                      earlier reset left .old folders, they stay and this one uses .old1, .old2, \
+                      and so on; delete them yourself once Windows Update works. Use this when \
+                      Windows Update is stuck or failing. A reboot afterwards is recommended.",
         duration_hint: "Under a minute",
         risk: Risk::Medium,
         elevation: Elevation::Administrator,
@@ -218,10 +220,17 @@ const RESET_UPDATE_SCRIPT: &str = concat!(
     "foreach ($service in $services) { ",
     "Write-Output ('Stopping ' + $service); ",
     "Stop-Service -Name $service -ErrorAction Stop }; ",
+    // An earlier reset left .old folders behind. Nothing is deleted, so pick
+    // the first suffix free for both folders: .old, then .old1, .old2, ...
+    "$suffix = 'old'; $n = 0; ",
+    "while ((Test-Path -LiteralPath ($env:SystemRoot + '\\SoftwareDistribution.' + $suffix)) -or ",
+    "(Test-Path -LiteralPath ($env:SystemRoot + '\\System32\\catroot2.' + $suffix))) { ",
+    "$n++; $suffix = 'old' + $n }; ",
+    "Write-Output ('Renaming the folders to .' + $suffix); ",
     "Rename-Item -LiteralPath ($env:SystemRoot + '\\SoftwareDistribution') ",
-    "-NewName 'SoftwareDistribution.old' -ErrorAction Stop; ",
+    "-NewName ('SoftwareDistribution.' + $suffix) -ErrorAction Stop; ",
     "Rename-Item -LiteralPath ($env:SystemRoot + '\\System32\\catroot2') ",
-    "-NewName 'catroot2.old' -ErrorAction Stop; ",
+    "-NewName ('catroot2.' + $suffix) -ErrorAction Stop; ",
     "} catch { $failed = $true; Write-Output ('Reset failed: ' + $_.Exception.Message) } ",
     "finally { foreach ($service in @('cryptsvc', 'bits', 'wuauserv')) { ",
     "try { Write-Output ('Starting ' + $service); ",
@@ -588,6 +597,29 @@ mod tests {
         assert_eq!(text.matches("renamed").count(), 2);
         assert_eq!(text.matches("restarted").count(), 3);
         assert!(text.contains("reset completed"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn update_reset_keeps_the_folders_an_earlier_reset_left() {
+        // `.old` is taken, `.old1` is free. Nothing is renamed for real.
+        let script = format!(
+            "function Stop-Service {{ 'stopped' }}; \
+             function Test-Path {{ param($LiteralPath) $LiteralPath -like '*.old' }}; \
+             function Rename-Item {{ param($LiteralPath, $NewName) 'renamed to ' + $NewName }}; \
+             function Start-Service {{ 'restarted' }}; {RESET_UPDATE_SCRIPT}"
+        );
+        let output = std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let text = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            text.contains("renamed to SoftwareDistribution.old1"),
+            "{text}"
+        );
+        assert!(text.contains("renamed to catroot2.old1"), "{text}");
     }
 
     #[test]
