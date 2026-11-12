@@ -189,12 +189,15 @@ fn reset_windows_update() -> Operation {
     Operation {
         id: "reset-windows-update",
         label: "Reset Windows Update",
-        description: "Stops the Windows Update, BITS, and Cryptographic services, renames the \
+        description: "Stops the Windows Update, BITS, and Cryptographic services, along with \
+                      the services that depend on the Cryptographic service, such as Application \
+                      Identity, which pauses AppLocker for the moment. It renames the \
                       SoftwareDistribution and catroot2 folders to .old (they are rebuilt \
-                      automatically; nothing is deleted), then restarts the services. When an \
-                      earlier reset left .old folders, they stay and this one uses .old1, .old2, \
-                      and so on; delete them yourself once Windows Update works. Use this when \
-                      Windows Update is stuck or failing. A reboot afterwards is recommended.",
+                      automatically; nothing is deleted), then restarts every service it \
+                      stopped. When an earlier reset left .old folders, they stay and this one \
+                      uses .old1, .old2, and so on; delete them yourself once Windows Update \
+                      works. Use this when Windows Update is stuck or failing. A reboot \
+                      afterwards is recommended.",
         duration_hint: "Under a minute",
         risk: Risk::Medium,
         elevation: Elevation::Administrator,

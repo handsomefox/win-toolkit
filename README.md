@@ -31,7 +31,7 @@ The app itself runs unelevated, with an `asInvoker` manifest, so the read-only t
 
 Every operation wraps a documented, built-in Windows command or API. There are no undocumented registry tweaks, no arbitrary service disabling, and no performance claims the app cannot back up.
 
-Before a privileged operation runs, the app shows what it does, roughly how long it takes, and what it costs you. A network reset needs a reboot afterward, for example, and Reset Windows Update renames the servicing folders rather than deleting them.
+Before a privileged operation runs, the app shows what it does, roughly how long it takes, and what it costs you. A network reset needs a reboot afterward, for example, and Reset Windows Update renames the servicing folders rather than deleting them. It also stops and restarts the services that depend on the Cryptographic service, such as Application Identity, as `net stop cryptsvc` does after asking.
 
 ![The confirmation for System File Checker, warning that it asks for administrator rights and cannot be cancelled](docs/confirm.png)
 
