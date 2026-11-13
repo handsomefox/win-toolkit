@@ -2,6 +2,28 @@
 
 Releases before 0.2.4 are listed on the [releases page](https://github.com/handsomefox/win-toolkit/releases).
 
+## 0.4.8
+
+- **Reset Windows Update** works when Application Identity is running, as it is on current Windows
+  11. It could not stop the Cryptographic service while a service that depends on it ran, so the
+  reset failed before renaming anything. It now also stops the running services that depend on it,
+  on BITS, or on Windows Update, such as Application Identity and the AppLocker filter, and starts
+  them again afterwards, as the confirmation says.
+- **Reset Windows Update** can run more than once. The second run failed because the `.old` folders
+  from the first were still there. It now uses `.old1`, `.old2`, and so on, and still deletes
+  nothing; delete the older folders yourself once Windows Update works.
+- Elevated operations start `cmd.exe` and Windows PowerShell from the Windows system folder by full
+  path. A file named `cmd.exe` in the folder the app was started from, or a `powershell.exe` in a
+  folder earlier on the search path, could have been run with administrator rights.
+- **Show memory compression state** shows the state again. Since 0.2.3 it failed with exit code 1
+  and no output.
+- A startup entry that cannot be changed shows why under **Startup**. While another operation ran,
+  the checkbox snapped back without an explanation.
+- Updates installed from this version on are safer with two copies of the app open. A copy that
+  starts while another installs an update no longer deletes that download, and a copy no longer
+  installs an older update over a newer one that another copy installed. Files you keep beside the
+  app, and logs you renamed to keep, are no longer deleted at startup.
+
 ## 0.4.7
 
 - **Check system drive** checks the drive Windows is installed on. It always checked `C:`, so a
