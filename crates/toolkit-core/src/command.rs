@@ -30,6 +30,12 @@ impl CommandSpec {
     }
 }
 
+/// The program name operations give Windows PowerShell. The app swaps in its
+/// full path with [`CommandLine::with_program_path`]: it lives outside the
+/// system directory, so `cmd.exe` would look a bare name up on `PATH`, where
+/// a folder the user can write to may come first.
+pub const POWERSHELL: &str = "powershell.exe";
+
 /// A command line to run through `cmd.exe`, either as a structured program plus
 /// arguments or as a raw multi-step script (needed for sequences such as
 /// resetting Windows Update).
@@ -47,6 +53,20 @@ impl CommandLine {
     #[must_use]
     pub fn program(program: &str, args: &[&str]) -> Self {
         CommandLine::Program(CommandSpec::new(program, args))
+    }
+
+    /// This command line, running `path` where it would run `program`.
+    #[must_use]
+    pub fn with_program_path(&self, program: &str, path: &str) -> Self {
+        match self {
+            CommandLine::Program(spec) if spec.program == program => {
+                CommandLine::Program(CommandSpec {
+                    program: path.to_owned(),
+                    args: spec.args.clone(),
+                })
+            }
+            other => other.clone(),
+        }
     }
 
     /// Renders the command portion (before any redirection): a quoted program
@@ -220,6 +240,19 @@ mod tests {
             params,
             r#"/d /c "(schtasks.exe /Run /TN "\Microsoft\Windows\Some Task" "") > "C:\out.log" 2>&1""#
         );
+    }
+
+    #[test]
+    fn program_path_replaces_only_the_named_program() {
+        let path = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe";
+        let command = CommandLine::program(POWERSHELL, &["-Command", "Get-MMAgent"])
+            .with_program_path(POWERSHELL, path);
+        assert_eq!(
+            elevated_cmd_parameters(&command, r"C:\out.txt"),
+            format!(r#"/d /c "({path} -Command Get-MMAgent) > "C:\out.txt" 2>&1""#)
+        );
+        let other = CommandLine::program("sfc", &["/scannow"]);
+        assert_eq!(other.with_program_path(POWERSHELL, path), other);
     }
 
     #[test]

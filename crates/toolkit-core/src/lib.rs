@@ -13,7 +13,7 @@ pub mod startup;
 pub mod sysinfo;
 
 pub use command::{
-    CommandLine, CommandSpec, compact_lines, console_lines, decode_console_output,
+    CommandLine, CommandSpec, POWERSHELL, compact_lines, console_lines, decode_console_output,
     elevated_cmd_parameters, looks_like_utf16le,
 };
 pub use operation::{

@@ -9,7 +9,7 @@ use std::time::Duration;
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use eframe::egui;
 use toolkit_core::{
-    CommandLine, Elevation, Execution, Operation, compact_lines, console_lines,
+    CommandLine, Elevation, Execution, Operation, POWERSHELL, compact_lines, console_lines,
     elevated_cmd_parameters, looks_like_utf16le,
 };
 use toolkit_platform::{ExecError, launch, run_capture, run_elevated};
@@ -114,10 +114,12 @@ fn run_operation(operation: &Operation, emit: &impl Fn(Event)) {
     match &operation.execution {
         Execution::Launch { target, args } => run_launch(operation, target, args, emit),
         Execution::Capture(command) => {
+            let powershell = toolkit_platform::windows_powershell();
+            let command = command.with_program_path(POWERSHELL, &powershell.to_string_lossy());
             if operation.elevation == Elevation::Administrator {
-                run_elevated_capture(operation, command, emit);
+                run_elevated_capture(operation, &command, emit);
             } else {
-                run_unelevated_capture(operation, command, emit);
+                run_unelevated_capture(operation, &command, emit);
             }
         }
     }

@@ -7,7 +7,7 @@
 //! of adding operations to a catalog — there is no plugin system or dynamic
 //! registry.
 
-use crate::command::CommandLine;
+use crate::command::{CommandLine, POWERSHELL};
 use crate::{Elevation, Risk};
 
 /// How an operation is carried out.
@@ -203,7 +203,7 @@ fn reset_windows_update() -> Operation {
         elevation: Elevation::Administrator,
         cancelable: false,
         execution: Execution::Capture(CommandLine::program(
-            "powershell.exe",
+            POWERSHELL,
             &[
                 "-NoProfile",
                 "-NonInteractive",
@@ -262,7 +262,16 @@ fn create_restore_point() -> Operation {
         risk: Risk::Low,
         elevation: Elevation::Administrator,
         cancelable: false,
-        execution: Execution::Capture(CommandLine::Script(RESTORE_POINT_SCRIPT.to_owned())),
+        execution: Execution::Capture(CommandLine::program(
+            POWERSHELL,
+            &[
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                RESTORE_POINT_SCRIPT,
+            ],
+        )),
     }
 }
 
@@ -276,8 +285,7 @@ fn create_restore_point() -> Operation {
 /// the run and it carries this app's description. Counting points instead
 /// would miss one, because Windows can delete the oldest point to make room.
 const RESTORE_POINT_SCRIPT: &str = concat!(
-    "powershell -NoProfile -ExecutionPolicy Bypass -Command ",
-    "\"try { ",
+    "try { ",
     "$b = (Get-ComputerRestorePoint | Measure-Object -Property SequenceNumber -Maximum).Maximum; ",
     "if ($null -eq $b) { $b = 0 }; ",
     "Checkpoint-Computer -Description 'Windows Toolkit' -RestorePointType MODIFY_SETTINGS ",
@@ -288,7 +296,7 @@ const RESTORE_POINT_SCRIPT: &str = concat!(
     "elseif ($w) { 'No restore point created: ' + ($w -join '; '); exit 1 } ",
     "else { 'No restore point created. A recent one may already exist, ",
     "or System Protection is off for the system drive.'; exit 1 } ",
-    "} catch { 'Could not create a restore point: ' + $_.Exception.Message; exit 1 }\"",
+    "} catch { 'Could not create a restore point: ' + $_.Exception.Message; exit 1 }",
 );
 
 /// The Network catalog: DNS/stack resets and configuration display.
@@ -431,7 +439,7 @@ pub fn performance_operations() -> Vec<Operation> {
             elevation: Elevation::Administrator,
             cancelable: false,
             execution: Execution::Capture(CommandLine::program(
-                "powershell",
+                POWERSHELL,
                 &["-NoProfile", "-Command", "(Get-MMAgent).MemoryCompression"],
             )),
         },
@@ -446,7 +454,7 @@ pub fn performance_operations() -> Vec<Operation> {
             elevation: Elevation::Administrator,
             cancelable: false,
             execution: Execution::Capture(CommandLine::program(
-                "powershell",
+                POWERSHELL,
                 &["-NoProfile", "-Command", "Enable-MMAgent -mc"],
             )),
         },
@@ -461,7 +469,7 @@ pub fn performance_operations() -> Vec<Operation> {
             elevation: Elevation::Administrator,
             cancelable: false,
             execution: Execution::Capture(CommandLine::program(
-                "powershell",
+                POWERSHELL,
                 &["-NoProfile", "-Command", "Disable-MMAgent -mc"],
             )),
         },
@@ -681,13 +689,45 @@ mod tests {
     }
 
     #[test]
+    fn every_powershell_operation_names_it_for_resolution() {
+        let operations = health_groups()
+            .into_iter()
+            .flat_map(|(_, ops)| ops)
+            .chain(network_operations())
+            .chain(performance_operations())
+            .chain(diagnostics_operations(
+                Some("report.html"),
+                r"C:\Windows",
+                Some("logs"),
+            ));
+        let mut found = 0;
+        for op in operations {
+            let Execution::Capture(command) = &op.execution else {
+                continue;
+            };
+            let program = match command {
+                CommandLine::Program(spec) => spec.program.as_str(),
+                CommandLine::Script(script) => script.as_str(),
+            };
+            if program.to_ascii_lowercase().contains("powershell") {
+                assert_eq!(program, POWERSHELL, "{}", op.id);
+                found += 1;
+            }
+        }
+        // Reset Windows Update, the restore point, and three memory compression ones.
+        assert_eq!(found, 5);
+    }
+
+    #[test]
     fn restore_point_errors_exit_non_zero() {
         let op = create_restore_point();
-        let Execution::Capture(CommandLine::Script(script)) = &op.execution else {
-            panic!("the restore point runs as a captured script");
+        let Execution::Capture(CommandLine::Program(spec)) = &op.execution else {
+            panic!("the restore point runs as a captured PowerShell command");
         };
+        assert_eq!(spec.program, POWERSHELL);
+        let script = spec.args.last().unwrap();
         assert!(script.ends_with(
-            "} catch { 'Could not create a restore point: ' + $_.Exception.Message; exit 1 }\""
+            "} catch { 'Could not create a restore point: ' + $_.Exception.Message; exit 1 }"
         ));
         // Both "no restore point created" branches fail the run too; only the
         // success branch exits 0.
@@ -697,12 +737,7 @@ mod tests {
         assert!(script.contains("SequenceNumber -gt $b"));
         assert!(!script.contains(".Count; "));
         // The script sits inside `cmd.exe`'s double-quoted `/c` argument.
-        assert!(
-            !script
-                .trim_start_matches(r#"powershell -NoProfile -ExecutionPolicy Bypass -Command ""#)
-                .trim_end_matches('"')
-                .contains('"')
-        );
+        assert!(!script.contains('"'));
     }
 
     #[test]

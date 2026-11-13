@@ -36,6 +36,16 @@ pub fn system_directory() -> PathBuf {
     PathBuf::from(system_root()).join("System32")
 }
 
+/// Windows PowerShell, `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`
+/// on most machines.
+#[must_use]
+pub fn windows_powershell() -> PathBuf {
+    system_directory()
+        .join("WindowsPowerShell")
+        .join("v1.0")
+        .join("powershell.exe")
+}
+
 /// The application's data directory: `%LOCALAPPDATA%\win-toolkit` on Windows,
 /// `$XDG_DATA_HOME/win-toolkit` or `~/.local/share/win-toolkit` elsewhere.
 #[must_use]
