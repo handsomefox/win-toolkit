@@ -190,8 +190,8 @@ fn reset_windows_update() -> Operation {
         id: "reset-windows-update",
         label: "Reset Windows Update",
         description: "Stops the Windows Update, BITS, and Cryptographic services, along with \
-                      the services that depend on the Cryptographic service, such as Application \
-                      Identity, which pauses AppLocker for the moment. It renames the \
+                      the running services that depend on them, such as Application Identity, \
+                      which pauses AppLocker for the moment. It renames the \
                       SoftwareDistribution and catroot2 folders to .old (they are rebuilt \
                       automatically; nothing is deleted), then restarts every service it \
                       stopped. When an earlier reset left .old folders, they stay and this one \
@@ -219,13 +219,13 @@ fn reset_windows_update() -> Operation {
 //
 // Application Identity and the AppLocker filter depend on the Cryptographic
 // service, and Stop-Service refuses to stop a service whose dependents run
-// unless -Force stops those too. The ones that were running are started again
-// afterwards.
+// unless -Force stops those too. DependentServices lists the indirect
+// dependents as well. The ones that were running are started again afterwards.
 const RESET_UPDATE_SCRIPT: &str = concat!(
     "$failed = $false; ",
     "$services = @('wuauserv', 'bits', 'cryptsvc'); ",
-    "$dependents = @((Get-Service -Name cryptsvc).DependentServices | ",
-    "Where-Object { $_.Status -eq 'Running' } | ForEach-Object { $_.Name }); ",
+    "$dependents = @(Get-Service -Name $services | ForEach-Object { $_.DependentServices } | ",
+    "Where-Object { $_.Status -eq 'Running' } | ForEach-Object { $_.Name } | Select-Object -Unique); ",
     "try { ",
     "foreach ($service in $services) { ",
     "Write-Output ('Stopping ' + $service); ",
@@ -571,12 +571,15 @@ mod tests {
         } else {
             "'restarted'"
         };
-        // One running dependent of the Cryptographic service, as Application
-        // Identity is on Windows 11.
+        // A running dependent of the Cryptographic service, as Application
+        // Identity is on Windows 11, and one of BITS. Windows Update shares
+        // Application Identity, which is started once.
         let script = format!(
-            "function Get-Service {{ [pscustomobject]@{{ DependentServices = @( \
-             [pscustomobject]@{{ Name = 'AppIDSvc'; Status = 'Running' }}, \
-             [pscustomobject]@{{ Name = 'Stopped1'; Status = 'Stopped' }}) }} }}; \
+            "function Get-Service {{ param($Name) $Name | ForEach-Object {{ \
+             $running = @{{ cryptsvc = 'AppIDSvc'; bits = 'BitsDependent'; wuauserv = 'AppIDSvc' }}; \
+             [pscustomobject]@{{ DependentServices = @( \
+             [pscustomobject]@{{ Name = $running[$_]; Status = 'Running' }}, \
+             [pscustomobject]@{{ Name = 'Stopped1'; Status = 'Stopped' }}) }} }} }}; \
              function Stop-Service {{ 'stopped' }}; function Rename-Item {{ {rename} }}; \
              function Start-Service {{ {restart} }}; {RESET_UPDATE_SCRIPT}"
         );
@@ -593,8 +596,9 @@ mod tests {
             let output = simulate_update_reset(rename_fails, restart_fails);
             assert_eq!(output.status.code(), Some(1));
             let text = String::from_utf8_lossy(&output.stdout);
-            assert_eq!(text.matches("Starting ").count(), 4);
-            assert!(text.contains("Starting AppIDSvc"));
+            assert_eq!(text.matches("Starting ").count(), 5);
+            assert_eq!(text.matches("Starting AppIDSvc").count(), 1);
+            assert!(text.contains("Starting BitsDependent"));
             assert!(!text.contains("reset completed"));
             assert!(text.contains(if rename_fails {
                 "rename blocked"
@@ -611,8 +615,8 @@ mod tests {
         assert!(output.status.success());
         let text = String::from_utf8_lossy(&output.stdout);
         assert_eq!(text.matches("renamed").count(), 2);
-        // The three services, then the dependent that was running.
-        assert_eq!(text.matches("restarted").count(), 4);
+        // The three services, then the two dependents that were running.
+        assert_eq!(text.matches("restarted").count(), 5);
         assert!(text.contains("reset completed"));
     }
 
