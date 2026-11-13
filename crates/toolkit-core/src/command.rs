@@ -87,11 +87,14 @@ impl CommandLine {
     }
 }
 
-/// Quotes a token only when it needs it (contains whitespace or is empty).
+/// Quotes a token only when it needs it: when it is empty, contains
+/// whitespace, or contains a character `cmd.exe` would act on, such as the `)`
+/// that ends the group [`elevated_cmd_parameters`] wraps the command in.
 /// Quoting tokens that do not need it can change how some programs parse their
 /// own command line, so it is applied sparingly.
 fn quote_if_needed(token: &str) -> Cow<'_, str> {
-    if token.is_empty() || token.chars().any(char::is_whitespace) {
+    let special = |c: char| c.is_whitespace() || "()&|<>^".contains(c);
+    if token.is_empty() || token.chars().any(special) {
         Cow::Owned(format!("\"{token}\""))
     } else {
         Cow::Borrowed(token)
@@ -239,6 +242,18 @@ mod tests {
         assert_eq!(
             params,
             r#"/d /c "(schtasks.exe /Run /TN "\Microsoft\Windows\Some Task" "") > "C:\out.log" 2>&1""#
+        );
+    }
+
+    #[test]
+    fn parameters_quote_arguments_cmd_would_parse() {
+        let command = CommandLine::program(
+            "powershell.exe",
+            &["-NoProfile", "-Command", "(Get-MMAgent).MemoryCompression"],
+        );
+        assert_eq!(
+            elevated_cmd_parameters(&command, r"C:\out.txt"),
+            r#"/d /c "(powershell.exe -NoProfile -Command "(Get-MMAgent).MemoryCompression") > "C:\out.txt" 2>&1""#
         );
     }
 
