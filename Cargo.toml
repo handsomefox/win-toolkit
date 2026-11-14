@@ -22,7 +22,7 @@ crossbeam-channel = "=0.5.17"
 eframe = { version = "=0.37.0", default-features = false, features = ["clipboard", "default_fonts", "glow", "links", "persistence", "x11"] }
 egui_extras = { version = "=0.37.0", features = ["image"] }
 image = { version = "=0.25.10", default-features = false, features = ["png"] }
-jiff = { version = "=0.2.38", features = ["serde"] }
+jiff = { version = "=0.2.39", features = ["serde"] }
 tempfile = "=3.27.0"
 thiserror = "=2.0.21"
 tracing = "=0.1.44"
