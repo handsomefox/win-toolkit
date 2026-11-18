@@ -12,7 +12,7 @@ workspace = true
 [dependencies]
 app-elevation.workspace = true
 app-folders.workspace = true
-toolkit-core = { version = "=0.4.8", path = "../toolkit-core" }
+toolkit-core = { version = "=0.5.0", path = "../toolkit-core" }
 thiserror.workspace = true
 
 [target."cfg(windows)".dependencies]

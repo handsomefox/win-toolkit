@@ -18,8 +18,8 @@ app-diagnostics.workspace = true
 app-instance.workspace = true
 app-update.workspace = true
 app-update-ui.workspace = true
-toolkit-core = { version = "=0.4.8", path = "../toolkit-core" }
-toolkit-platform = { version = "=0.4.8", path = "../toolkit-platform" }
+toolkit-core = { version = "=0.5.0", path = "../toolkit-core" }
+toolkit-platform = { version = "=0.5.0", path = "../toolkit-platform" }
 crossbeam-channel.workspace = true
 eframe.workspace = true
 egui_extras.workspace = true

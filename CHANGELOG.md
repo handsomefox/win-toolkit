@@ -2,6 +2,30 @@
 
 Releases before 0.2.4 are listed on the [releases page](https://github.com/handsomefox/win-toolkit/releases).
 
+## 0.5.0
+
+- Opening Windows Toolkit while it is already open brings the open window to the front instead of
+  starting a second copy.
+- **Startup** also lists the 32-bit `Run` key for all users, and the Startup folders: yours and the
+  one for all users. Enabling or disabling an entry in your Startup folder writes the same setting
+  that Task Manager writes.
+- **Set Ultimate Performance power plan** replaces **Add Ultimate Performance power plan**. It adds
+  the plan only the first time, then makes it the active plan. The old action added another copy
+  of the plan on every click. To remove copies it left behind, open **Control Panel** > **Power
+  Options**.
+- The app stays open while an operation runs, and says why. Closing it during `sfc` or `DISM` left
+  the tool running out of sight, with no way to see its progress or result.
+- **Release IP address** and **Renew IP address** ask for administrator rights, which Windows
+  needs for both. Without them, the run could fail.
+- Tools that run without administrator rights, such as `ipconfig`, `powercfg`, and `dxdiag`, start
+  from the Windows system folder by full path. A file with the same name in the app's folder could
+  have run instead.
+- The `runs` folder keeps the newest 50 operation logs and deletes older ones. It grew with every
+  elevated run.
+- **Overview** collects the system information in the background, so the window keeps responding
+  while it reads the drives.
+- Build with Rust 1.100.0.
+
 ## 0.4.8
 
 - **Reset Windows Update** works when Application Identity is running, as it is on current Windows
