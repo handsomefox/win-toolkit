@@ -15,6 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 app-diagnostics.workspace = true
+app-instance.workspace = true
 app-update.workspace = true
 app-update-ui.workspace = true
 toolkit-core = { version = "=0.4.8", path = "../toolkit-core" }

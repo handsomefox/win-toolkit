@@ -27,10 +27,37 @@ pub enum ExecError {
     Api(String),
 }
 
-#[cfg(windows)]
-pub use imp::ElevatedChild;
-#[cfg(not(windows))]
-pub use stub::ElevatedChild;
+/// An owning handle to an elevated child process.
+pub struct ElevatedChild {
+    child: app_elevation::Child,
+}
+
+impl ElevatedChild {
+    /// Returns the process exit code if it has finished, or `None` while it
+    /// is still running.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExecError::Api`] if querying the process fails.
+    pub fn try_exit_code(&self) -> Result<Option<i32>, ExecError> {
+        let code = self.child.try_wait().map_err(elevation_error)?;
+        #[expect(
+            clippy::cast_possible_wrap,
+            reason = "process exit codes round-trip through i32 as reported by the tool"
+        )]
+        Ok(code.map(|code| code as i32))
+    }
+}
+
+/// Maps a launch or wait failure onto this module's errors, keeping a
+/// declined UAC prompt distinct.
+fn elevation_error(error: app_elevation::Error) -> ExecError {
+    match error {
+        app_elevation::Error::Cancelled => ExecError::Declined,
+        app_elevation::Error::Unsupported => ExecError::Unsupported,
+        other => ExecError::Api(other.to_string()),
+    }
+}
 
 /// The captured result of an unelevated command.
 pub struct CaptureOutput {
@@ -89,7 +116,15 @@ pub fn launch(target: &str, args: &[String]) -> Result<(), ExecError> {
 pub fn run_elevated(program: &str, parameters: &str) -> Result<ElevatedChild, ExecError> {
     #[cfg(windows)]
     {
-        imp::run_elevated(program, parameters)
+        // The elevated command line names tools such as `sfc` without a
+        // path, and the shell looks in the working directory first.
+        let child = app_elevation::Command::new(program)
+            .raw_arg(parameters)
+            .current_dir(crate::paths::system_directory())
+            .show(app_elevation::Show::Hidden)
+            .spawn()
+            .map_err(elevation_error)?;
+        Ok(ElevatedChild { child })
     }
     #[cfg(not(windows))]
     {
@@ -100,161 +135,19 @@ pub fn run_elevated(program: &str, parameters: &str) -> Result<ElevatedChild, Ex
 
 #[cfg(windows)]
 mod imp {
-    use std::ffi::c_void;
     use std::os::windows::process::CommandExt as _;
 
-    use windows::Win32::Foundation::{CloseHandle, ERROR_CANCELLED, GetLastError, HANDLE};
-    use windows::Win32::System::Com::{
-        COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, CoInitializeEx, CoUninitialize,
-    };
-    use windows::Win32::System::Threading::GetExitCodeProcess;
-    use windows::Win32::UI::Shell::{
-        SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW, ShellExecuteW,
-    };
-    use windows::Win32::UI::WindowsAndMessaging::{SW_HIDE, SW_SHOWNORMAL};
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
     use windows::core::{HSTRING, PCWSTR, w};
 
     use super::{CaptureOutput, ExecError};
-
-    /// COM initialized on the calling thread for one shell call.
-    ///
-    /// `ShellExecute` can hand a file to a shell extension that is a COM
-    /// object, so Microsoft asks callers to initialize COM first, as a
-    /// single-threaded apartment without OLE1 DDE. These calls run on the
-    /// worker thread, which nothing else initializes.
-    struct ComApartment {
-        /// Whether this guard's `CoInitializeEx` succeeded and so must be
-        /// balanced. A thread that already chose another apartment keeps it.
-        initialized: bool,
-    }
-
-    impl ComApartment {
-        fn enter() -> Self {
-            // SAFETY: called with no reserved pointer; the result is checked
-            // and balanced in `Drop` only when it succeeded.
-            let result =
-                unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) };
-            Self {
-                initialized: result.is_ok(),
-            }
-        }
-    }
-
-    impl Drop for ComApartment {
-        fn drop(&mut self) {
-            if self.initialized {
-                // SAFETY: balances the successful `CoInitializeEx` in `enter`
-                // on the same thread.
-                unsafe { CoUninitialize() };
-            }
-        }
-    }
 
     /// Runs a child process without flashing a console window.
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
     /// Values at or below this from `ShellExecuteW` indicate an error.
     const SHELL_EXECUTE_MIN_SUCCESS: usize = 32;
-
-    /// `GetExitCodeProcess` reports this value while the process is still
-    /// running.
-    const STILL_ACTIVE: u32 = 259;
-
-    /// An owning handle to an elevated child process.
-    pub struct ElevatedChild {
-        /// The process `HANDLE`, stored as an integer so the type is `Send` and
-        /// can be moved onto the worker thread. Reconstructed into a `HANDLE`
-        /// for each API call.
-        handle: isize,
-    }
-
-    // SAFETY: the stored value is an owned process handle. `ElevatedChild` has
-    // exclusive ownership of it (closed once in `Drop`) and never aliases it, so
-    // it is safe to move between threads.
-    unsafe impl Send for ElevatedChild {}
-
-    impl ElevatedChild {
-        fn handle(&self) -> HANDLE {
-            HANDLE(self.handle as *mut c_void)
-        }
-
-        /// Returns the process exit code if it has finished, or `None` while it
-        /// is still running.
-        ///
-        /// # Errors
-        ///
-        /// Returns [`ExecError::Api`] if querying the process fails.
-        pub fn try_exit_code(&self) -> Result<Option<i32>, ExecError> {
-            let mut code: u32 = 0;
-            // SAFETY: `self.handle()` is a valid process handle owned by this
-            // struct, and `code` is a valid out-pointer.
-            unsafe { GetExitCodeProcess(self.handle(), &raw mut code) }
-                .map_err(|err| ExecError::Api(err.message()))?;
-            if code == STILL_ACTIVE {
-                return Ok(None);
-            }
-            #[expect(
-                clippy::cast_possible_wrap,
-                reason = "process exit codes round-trip through i32 as reported by the tool"
-            )]
-            Ok(Some(code as i32))
-        }
-    }
-
-    impl Drop for ElevatedChild {
-        fn drop(&mut self) {
-            // SAFETY: the handle was returned by `ShellExecuteExW` with
-            // `SEE_MASK_NOCLOSEPROCESS` and is closed exactly once here.
-            let _ = unsafe { CloseHandle(self.handle()) };
-        }
-    }
-
-    pub(super) fn run_elevated(
-        program: &str,
-        parameters: &str,
-    ) -> Result<ElevatedChild, ExecError> {
-        // The HSTRINGs must outlive the `ShellExecuteExW` call below.
-        let file = HSTRING::from(program);
-        let parameters = HSTRING::from(parameters);
-        // The elevated command line names tools such as `sfc` without a
-        // path, and the shell looks in the working directory first.
-        let directory = HSTRING::from(crate::paths::system_directory().as_path());
-
-        let mut info = SHELLEXECUTEINFOW {
-            cbSize: u32::try_from(size_of::<SHELLEXECUTEINFOW>()).unwrap_or_default(),
-            // Required so `hProcess` is populated and we can read the exit code.
-            fMask: SEE_MASK_NOCLOSEPROCESS,
-            lpVerb: w!("runas"),
-            lpFile: PCWSTR(file.as_ptr()),
-            lpParameters: PCWSTR(parameters.as_ptr()),
-            lpDirectory: PCWSTR(directory.as_ptr()),
-            nShow: SW_HIDE.0,
-            ..Default::default()
-        };
-
-        let _com = ComApartment::enter();
-        // SAFETY: `info` is fully initialized and its string pointers reference
-        // `file`/`parameters`, which outlive this call.
-        let launched = unsafe { ShellExecuteExW(&raw mut info) };
-        if let Err(err) = launched {
-            // SAFETY: reads the calling thread's last-error code.
-            let last = unsafe { GetLastError() };
-            if last == ERROR_CANCELLED {
-                return Err(ExecError::Declined);
-            }
-            return Err(ExecError::Api(err.message()));
-        }
-
-        if info.hProcess.is_invalid() {
-            return Err(ExecError::Api(
-                "ShellExecuteEx returned no process handle".to_owned(),
-            ));
-        }
-
-        Ok(ElevatedChild {
-            handle: info.hProcess.0 as isize,
-        })
-    }
 
     pub(super) fn run_capture(program: &str, args: &[String]) -> Result<CaptureOutput, ExecError> {
         let output = std::process::Command::new(program)
@@ -280,7 +173,7 @@ mod imp {
             PCWSTR(parameters.as_ptr())
         };
 
-        let _com = ComApartment::enter();
+        let _com = app_elevation::ComApartment::enter();
         // SAFETY: `file`/`parameters` outlive the call and the pointers are
         // valid; a null directory and default show command are accepted.
         let instance = unsafe {
@@ -300,28 +193,5 @@ mod imp {
             )));
         }
         Ok(())
-    }
-}
-
-#[cfg(not(windows))]
-mod stub {
-    use super::ExecError;
-
-    /// Placeholder handle type on non-Windows platforms. Never constructed;
-    /// [`super::run_elevated`] returns [`ExecError::Unsupported`] before any
-    /// child could exist.
-    pub struct ElevatedChild {
-        _private: (),
-    }
-
-    impl ElevatedChild {
-        /// Always fails: no elevated child can exist off Windows.
-        ///
-        /// # Errors
-        ///
-        /// Always returns [`ExecError::Unsupported`].
-        pub fn try_exit_code(&self) -> Result<Option<i32>, ExecError> {
-            Err(ExecError::Unsupported)
-        }
     }
 }

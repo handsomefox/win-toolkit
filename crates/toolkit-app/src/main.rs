@@ -31,11 +31,34 @@ fn main() -> eframe::Result {
             .with_icon(app_icon()),
         ..Default::default()
     };
-    let result = eframe::run_native(
-        toolkit_core::APP_TITLE,
-        options,
-        Box::new(move |cc| Ok(Box::new(app::ToolkitApp::new(cc, logs_dir)))),
-    );
+    // The guard lives only for the window, so an updated copy started below
+    // finds the lock free.
+    let result = {
+        // A second launch brings this window forward instead of opening another.
+        let instance = match app_instance::acquire(APP_INFO.bin) {
+            Ok(app_instance::Instance::Primary(guard)) => Some(guard),
+            Ok(app_instance::Instance::Secondary) => {
+                tracing::info!("another copy is running; asked it to come forward");
+                return Ok(());
+            }
+            // Run without the guard rather than refuse to start.
+            Err(error) => {
+                tracing::warn!(%error, "running without the single-instance lock");
+                None
+            }
+        };
+
+        eframe::run_native(
+            toolkit_core::APP_TITLE,
+            options,
+            Box::new(|cc| {
+                if let Some(guard) = &instance {
+                    bring_forward_on_activate(guard, &cc.egui_ctx);
+                }
+                Ok(Box::new(app::ToolkitApp::new(cc, logs_dir)))
+            }),
+        )
+    };
     // eframe saves the app's state before `run_native` returns, so the
     // updated copy starts from everything this one knew.
     if let Err(error) = app_update::restart_if_requested() {
@@ -52,6 +75,19 @@ const APP_INFO: app_update::AppInfo = app_update::AppInfo {
     bin: "win-toolkit",
     version: env!("CARGO_PKG_VERSION"),
 };
+
+/// Restores and focuses the window whenever another launch signals.
+fn bring_forward_on_activate(guard: &app_instance::Guard, ctx: &egui::Context) {
+    let ctx = ctx.clone();
+    let watching = guard.on_activate(move || {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        ctx.request_repaint();
+    });
+    if let Err(error) = watching {
+        tracing::warn!(%error, "a second launch will not bring this window forward");
+    }
+}
 
 fn app_icon() -> egui::IconData {
     let bytes = include_bytes!("../assets/icon.png");
