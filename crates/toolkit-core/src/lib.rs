@@ -14,14 +14,17 @@ pub mod sysinfo;
 
 pub use command::{
     CommandLine, CommandSpec, POWERSHELL, compact_lines, console_lines, decode_console_output,
-    elevated_cmd_parameters, looks_like_utf16le,
+    elevated_cmd_parameters, looks_like_utf16le, system_program_path,
 };
 pub use operation::{
     Execution, Operation, diagnostics_operations, health_groups, launcher, network_operations,
     open_logs_folder, performance_operations,
 };
 pub use sandbox::SandboxConfig;
-pub use startup::{StartupEntry, StartupScope};
+pub use startup::{
+    STARTUP_APPROVED, StartupEntry, StartupScope, StartupSource, approved_value,
+    approved_value_enabled, is_startup_folder_entry,
+};
 pub use sysinfo::{DriveInfo, SystemInfo, format_bytes, format_uptime};
 
 /// The short, filesystem-safe application slug. Used for the app-data directory

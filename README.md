@@ -17,9 +17,9 @@ The app has seven sections.
 
 **Network.** Flush the DNS resolver cache, reset the Winsock catalog, reset the TCP/IP stack, release or renew the IP address, and view `ipconfig /all`.
 
-**Startup.** List startup entries, and enable or disable them.
+**Startup.** List the programs that start at sign-in, from the `Run` registry keys (including the 32-bit one) and the Startup folders, for you and for all users. Enable or disable your own, as Task Manager does.
 
-**Performance.** Switch power plans, add the Ultimate Performance plan, and turn Windows memory compression on or off. No invented speed-ups.
+**Performance.** Switch power plans, including Microsoft's hidden Ultimate Performance plan, and turn Windows memory compression on or off. No invented speed-ups.
 
 **Sandbox.** Build a Windows Sandbox configuration and launch it.
 
@@ -35,7 +35,7 @@ Before a privileged operation runs, the app shows what it does, roughly how long
 
 ![The confirmation for System File Checker, warning that it asks for administrator rights and cannot be cancelled](docs/confirm.png)
 
-The long repair operations, `sfc` and `DISM`, are not cancelable, because interrupting them mid-run can leave the component store inconsistent. Their output streams to the log view as it arrives, and each run saves it to a file in `%LOCALAPPDATA%\win-toolkit\runs\`. The diagnostics log records when each operation starts and finishes, and any failure.
+The long repair operations, `sfc` and `DISM`, are not cancelable, because interrupting them mid-run can leave the component store inconsistent. Their output streams to the log view as it arrives, and each run saves it to a file in `%LOCALAPPDATA%\win-toolkit\runs\`. That folder keeps the newest 50 run logs. The app does not close while an operation runs, because the elevated process would keep going with nothing to show its result. The diagnostics log records when each operation starts and finishes, and any failure.
 
 ## Install
 

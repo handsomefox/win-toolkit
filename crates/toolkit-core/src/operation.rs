@@ -331,17 +331,20 @@ pub fn network_operations() -> Vec<Operation> {
                           drop until you renew.",
             duration_hint: "",
             risk: Risk::Low,
-            elevation: Elevation::None,
+            // Releasing and renewing are administrative: Microsoft lists them
+            // among the rights of the Network Configuration Operators group.
+            elevation: Elevation::Administrator,
             cancelable: false,
             execution: Execution::Capture(CommandLine::program("ipconfig", &["/release"])),
         },
         Operation {
             id: "renew-ip",
             label: "Renew IP address",
-            description: "Requests a fresh DHCP lease on all adapters.",
+            description: "Requests a fresh DHCP lease on all adapters. Connections may drop for a \
+                          moment if the address changes.",
             duration_hint: "",
             risk: Risk::Low,
-            elevation: Elevation::None,
+            elevation: Elevation::Administrator,
             cancelable: false,
             execution: Execution::Capture(CommandLine::program("ipconfig", &["/renew"])),
         },
@@ -415,20 +418,7 @@ pub fn performance_operations() -> Vec<Operation> {
                 &["/setactive", "scheme_min"],
             )),
         },
-        Operation {
-            id: "powercfg-ultimate",
-            label: "Add Ultimate Performance power plan",
-            description: "Adds Microsoft's hidden Ultimate Performance plan so it can be selected. \
-                          Adds a documented plan; it does not change your active plan.",
-            duration_hint: "",
-            risk: Risk::Low,
-            elevation: Elevation::None,
-            cancelable: false,
-            execution: Execution::Capture(CommandLine::program(
-                "powercfg",
-                &["-duplicatescheme", "e9a42b02-d5df-448d-aa00-03f14749eb61"],
-            )),
-        },
+        ultimate_performance(),
         Operation {
             id: "mmagent-status",
             label: "Show memory compression state",
@@ -475,6 +465,50 @@ pub fn performance_operations() -> Vec<Operation> {
         },
     ]
 }
+
+fn ultimate_performance() -> Operation {
+    Operation {
+        id: "powercfg-ultimate",
+        label: "Set Ultimate Performance power plan",
+        description: "Adds Microsoft's hidden Ultimate Performance plan the first time, then \
+                      switches the active power plan to it. It uses more power than Balanced. \
+                      Running it again adds no second copy. Copies that earlier versions of this \
+                      app added stay. To delete them, open Control Panel > Power Options.",
+        duration_hint: "",
+        risk: Risk::Low,
+        elevation: Elevation::None,
+        cancelable: false,
+        execution: Execution::Capture(CommandLine::program(
+            POWERSHELL,
+            &[
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                ULTIMATE_PLAN_SCRIPT,
+            ],
+        )),
+    }
+}
+
+/// PowerShell that copies Microsoft's hidden Ultimate Performance plan,
+/// `e9a42b02-…`, to this app's own plan GUID, `164f1452-…`, unless
+/// `powercfg /list` already shows that GUID. It then makes that plan the
+/// active one. Without a fixed destination GUID, `powercfg /duplicatescheme`
+/// makes a new copy on every run.
+///
+/// A failed `powercfg` call ends the run with its exit code. `powercfg` runs by
+/// full path from the system directory, so no file of that name earlier on the
+/// search path runs instead.
+const ULTIMATE_PLAN_SCRIPT: &str = concat!(
+    "$powercfg = Join-Path ([Environment]::SystemDirectory) 'powercfg.exe'; ",
+    "$plan = '164f1452-a361-4d9b-832c-defc41f2b0ca'; ",
+    "if (-not ((& $powercfg /list) -match $plan)) { ",
+    "& $powercfg /duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61 $plan | Write-Output; ",
+    "if ($LASTEXITCODE -ne 0) { 'Could not add the Ultimate Performance plan.'; exit $LASTEXITCODE } }; ",
+    "& $powercfg /setactive $plan; ",
+    "if ($LASTEXITCODE -ne 0) { 'Could not switch to the Ultimate Performance plan.'; exit $LASTEXITCODE }; ",
+    "'Ultimate Performance is the active power plan.'",
+);
 
 /// The Diagnostics catalog, which mixes a captured report generator with
 /// launchers for built-in Windows tools and the app's own files.
@@ -714,8 +748,53 @@ mod tests {
                 found += 1;
             }
         }
-        // Reset Windows Update, the restore point, and three memory compression ones.
-        assert_eq!(found, 5);
+        // Reset Windows Update, the restore point, Ultimate Performance, and
+        // three memory compression ones.
+        assert_eq!(found, 6);
+    }
+
+    #[test]
+    fn dhcp_release_and_renew_are_elevated() {
+        for id in ["release-ip", "renew-ip"] {
+            let op = network_operations()
+                .into_iter()
+                .find(|op| op.id == id)
+                .unwrap();
+            assert_eq!(op.elevation, Elevation::Administrator, "{id}");
+        }
+    }
+
+    #[test]
+    fn ultimate_performance_copies_to_one_fixed_plan_and_activates_it() {
+        let op = performance_operations()
+            .into_iter()
+            .find(|op| op.id == "powercfg-ultimate")
+            .unwrap();
+        assert_eq!(op.elevation, Elevation::None);
+        let Execution::Capture(CommandLine::Program(spec)) = &op.execution else {
+            panic!("Ultimate Performance runs as a captured PowerShell command");
+        };
+        assert_eq!(spec.program, POWERSHELL);
+        let script = spec.args.last().unwrap();
+        assert_eq!(script, ULTIMATE_PLAN_SCRIPT);
+        let plan = "164f1452-a361-4d9b-832c-defc41f2b0ca";
+        // The copy goes to the fixed GUID, never to a new one.
+        assert!(script.contains(
+            "/duplicatescheme e9a42b02-d5df-448d-aa00-03f14749eb61 $plan | Write-Output;"
+        ));
+        assert!(script.contains(&format!("$plan = '{plan}';")));
+        assert!(script.contains("-match $plan"));
+        assert!(script.contains("/setactive $plan;"));
+        // Each powercfg failure ends the run with its exit code.
+        assert_eq!(script.matches("exit $LASTEXITCODE").count(), 2);
+        // powercfg runs by full path, never by bare name.
+        assert!(script.contains("[Environment]::SystemDirectory) 'powercfg.exe'"));
+        assert_eq!(script.matches("& $powercfg").count(), 3);
+        assert_eq!(
+            script.matches("powercfg /").count(),
+            script.matches("$powercfg /").count()
+        );
+        assert!(!script.contains('"'));
     }
 
     #[test]

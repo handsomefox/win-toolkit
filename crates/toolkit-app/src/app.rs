@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crossbeam_channel::TryRecvError;
+use crossbeam_channel::{Receiver, TryRecvError};
 use eframe::egui::{self, RichText};
 use toolkit_core::{
     Elevation, Operation, Risk, SandboxConfig, StartupEntry, StartupScope, SystemInfo,
@@ -163,14 +163,84 @@ impl RunPanel {
     }
 }
 
+/// The Overview's system information. A background thread collects it, so
+/// slow registry or drive queries never stall the window.
+#[derive(Default)]
+struct Overview {
+    /// The last collected information. A refresh keeps it on screen until the
+    /// new collection arrives.
+    info: Option<SystemInfo>,
+    /// The collection in progress.
+    pending: Option<Receiver<SystemInfo>>,
+    /// Whether the last collection stopped without a result.
+    failed: bool,
+}
+
+impl Overview {
+    fn is_loading(&self) -> bool {
+        self.pending.is_some()
+    }
+
+    /// Whether the section has nothing to show and nothing on the way. A
+    /// failed collection waits for **Refresh** instead of retrying every frame.
+    fn needs_first_load(&self) -> bool {
+        self.info.is_none() && self.pending.is_none() && !self.failed
+    }
+
+    /// Starts a collection with `start`, unless one is already running.
+    fn request(&mut self, start: impl FnOnce() -> Receiver<SystemInfo>) {
+        if self.pending.is_none() {
+            self.failed = false;
+            self.pending = Some(start());
+        }
+    }
+
+    /// Takes the result of a finished collection.
+    fn poll(&mut self) {
+        let Some(pending) = &self.pending else {
+            return;
+        };
+        match pending.try_recv() {
+            Ok(info) => {
+                self.info = Some(info);
+                self.pending = None;
+            }
+            Err(TryRecvError::Empty) => {}
+            Err(TryRecvError::Disconnected) => {
+                self.failed = true;
+                self.pending = None;
+            }
+        }
+    }
+}
+
+/// Keeps the window open when the user closes it while an operation runs, and
+/// brings the window back so the reason is seen. An elevated child cannot be
+/// stopped from here, so a closed app would leave it running out of sight,
+/// with nothing to show its progress or result. Returns whether a close was
+/// refused.
+fn refuse_close_while_running(ctx: &egui::Context, running: bool) -> bool {
+    if !running || !ctx.input(|input| input.viewport().close_requested()) {
+        return false;
+    }
+    ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+    // A close from the taskbar can come while minimized.
+    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+    true
+}
+
 pub(crate) struct ToolkitApp {
     worker: Worker,
     section: Section,
     run: RunPanel,
+    /// Whether the app refused to close during the running operation. The run
+    /// panel then says why.
+    close_refused: bool,
     confirm: Option<Operation>,
     /// The folder that holds the diagnostics log, when file logging works.
     logs_dir: Option<PathBuf>,
-    overview: Option<SystemInfo>,
+    overview: Overview,
     sandbox: SandboxConfig,
     /// Checked once: turning the feature on takes a reboot.
     sandbox_available: bool,
@@ -208,8 +278,9 @@ impl ToolkitApp {
             worker: worker::spawn(cc.egui_ctx.clone()),
             section: Section::Health,
             run: RunPanel::default(),
+            close_refused: false,
             confirm: None,
-            overview: None,
+            overview: Overview::default(),
             sandbox: SandboxConfig::default(),
             sandbox_available: sandbox_available(),
             startup: None,
@@ -236,6 +307,7 @@ impl ToolkitApp {
 
     fn start(&mut self, operation: Operation) {
         if self.run.show(RunView::running(&operation)) {
+            self.close_refused = false;
             if !self.worker.send(Command::Run(operation)) {
                 self.run.worker_stopped();
             }
@@ -328,9 +400,13 @@ impl ToolkitApp {
     }
 
     fn draw_overview(&mut self, ui: &mut egui::Ui) {
-        let info = &*self
-            .overview
-            .get_or_insert_with(toolkit_platform::system_info);
+        let ctx = ui.ctx().clone();
+        let collect = || worker::collect_system_info(ctx);
+        self.overview.poll();
+        if self.overview.needs_first_load() {
+            self.overview.request(collect.clone());
+        }
+        let overview = &self.overview;
         let mut refresh = false;
         let mut copy = false;
         egui::ScrollArea::vertical()
@@ -339,68 +415,101 @@ impl ToolkitApp {
                 ui.horizontal(|ui| {
                     ui.heading("Overview");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Copy report").clicked() {
+                        if ui
+                            .add_enabled(overview.info.is_some(), egui::Button::new("Copy report"))
+                            .clicked()
+                        {
                             copy = true;
                         }
-                        if ui.button("Refresh").clicked() {
+                        if ui
+                            .add_enabled(!overview.is_loading(), egui::Button::new("Refresh"))
+                            .clicked()
+                        {
                             refresh = true;
+                        }
+                        if overview.is_loading() {
+                            ui.spinner();
                         }
                     });
                 });
                 ui.add_space(theme::SPACE_MD);
-                card(ui, |ui| {
-                    info_row(
-                        ui,
-                        "OS",
-                        &format!("{} (build {})", info.os_name, info.os_build),
+                if overview.failed {
+                    ui.label(
+                        RichText::new(
+                            "Could not collect the system information. The diagnostics log has \
+                             the details.",
+                        )
+                        .color(theme::DANGER),
                     );
-                    info_row(ui, "Machine", &info.computer_name);
-                    if !info.system_model.is_empty() {
-                        info_row(ui, "Model", &info.system_model);
-                    }
-                    info_row(ui, "Uptime", &info.uptime);
-                    info_row(
-                        ui,
-                        "CPU",
-                        &format!("{} ({} logical)", info.cpu, info.logical_cpus),
-                    );
-                    for (index, gpu) in info.gpus.iter().enumerate() {
-                        let label = if index == 0 { "GPU" } else { "" };
-                        info_row(ui, label, gpu);
-                    }
-                    info_row(
-                        ui,
-                        "Memory",
-                        &format!(
-                            "{} free of {}",
-                            format_bytes(info.available_memory),
-                            format_bytes(info.total_memory)
-                        ),
-                    );
-                });
-                ui.add_space(theme::SPACE_MD);
-                ui.label(RichText::new("Drives").family(theme::bold()));
-                ui.add_space(theme::SPACE_XS);
-                card(ui, |ui| {
-                    for drive in &info.drives {
-                        info_row(
-                            ui,
-                            &drive.name,
-                            &format!(
-                                "{} free of {}",
-                                format_bytes(drive.free),
-                                format_bytes(drive.total)
-                            ),
+                    ui.add_space(theme::SPACE_SM);
+                }
+                match &overview.info {
+                    Some(info) => Self::system_info_cards(ui, info),
+                    None if overview.is_loading() => {
+                        ui.label(
+                            RichText::new("Collecting system information…").color(theme::MUTED),
                         );
                     }
-                });
+                    None => {}
+                }
             });
-        if copy {
+        if copy && let Some(info) = &overview.info {
             ui.ctx().copy_text(info.to_report());
         }
         if refresh {
-            self.overview = Some(toolkit_platform::system_info());
+            self.overview.request(collect);
         }
+    }
+
+    /// Draws the collected system information as two cards: the system, then
+    /// its drives.
+    fn system_info_cards(ui: &mut egui::Ui, info: &SystemInfo) {
+        card(ui, |ui| {
+            info_row(
+                ui,
+                "OS",
+                &format!("{} (build {})", info.os_name, info.os_build),
+            );
+            info_row(ui, "Machine", &info.computer_name);
+            if !info.system_model.is_empty() {
+                info_row(ui, "Model", &info.system_model);
+            }
+            info_row(ui, "Uptime", &info.uptime);
+            info_row(
+                ui,
+                "CPU",
+                &format!("{} ({} logical)", info.cpu, info.logical_cpus),
+            );
+            for (index, gpu) in info.gpus.iter().enumerate() {
+                let label = if index == 0 { "GPU" } else { "" };
+                info_row(ui, label, gpu);
+            }
+            info_row(
+                ui,
+                "Memory",
+                &format!(
+                    "{} free of {}",
+                    format_bytes(info.available_memory),
+                    format_bytes(info.total_memory)
+                ),
+            );
+        });
+        ui.add_space(theme::SPACE_MD);
+        ui.label(RichText::new("Drives").family(theme::bold()));
+        ui.add_space(theme::SPACE_XS);
+        card(ui, |ui| {
+            for drive in &info.drives {
+                info_row(
+                    ui,
+                    &drive.name,
+                    &format!(
+                        "{} free of {}",
+                        format_bytes(drive.free),
+                        format_bytes(drive.total)
+                    ),
+                );
+            }
+        });
     }
 
     fn draw_sandbox(&mut self, ui: &mut egui::Ui) {
@@ -483,7 +592,7 @@ impl ToolkitApp {
         let entries = &*self.startup.get_or_insert_with(load_startup);
         let error = self.startup_error.as_deref();
         let mut refresh = false;
-        let mut toggle: Option<(StartupScope, String, bool)> = None;
+        let mut toggle: Option<(StartupEntry, bool)> = None;
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
@@ -507,7 +616,7 @@ impl ToolkitApp {
                 }
                 for entry in entries {
                     if let Some(change) = startup_card(ui, entry) {
-                        toggle = Some((entry.scope, entry.name.clone(), change));
+                        toggle = Some((entry.clone(), change));
                     }
                     ui.add_space(theme::SPACE_SM);
                 }
@@ -516,8 +625,8 @@ impl ToolkitApp {
             self.startup = Some(load_startup());
             self.startup_error = None;
         }
-        if let Some((scope, name, enabled)) = toggle {
-            match toolkit_platform::set_startup_enabled(scope, &name, enabled) {
+        if let Some((entry, enabled)) = toggle {
+            match toolkit_platform::set_startup_enabled(&entry, enabled) {
                 Ok(()) => {
                     self.startup = Some(load_startup());
                     self.startup_error = None;
@@ -565,6 +674,16 @@ impl ToolkitApp {
                         }
                     });
                 });
+                if running && self.close_refused {
+                    ui.label(
+                        RichText::new(
+                            "Windows Toolkit stays open until this operation finishes. If the app \
+                             closed now, the operation would keep running out of sight, and \
+                             nothing would show its progress or result.",
+                        )
+                        .color(theme::WARNING),
+                    );
+                }
                 if run.is_capture {
                     ui.add_space(theme::SPACE_SM);
                     egui::ScrollArea::vertical()
@@ -688,7 +807,14 @@ fn startup_card(ui: &mut egui::Ui, entry: &StartupEntry) -> Option<bool> {
             ui.vertical(|ui| {
                 ui.label(RichText::new(&entry.name).family(theme::bold()));
                 ui.label(RichText::new(&entry.command).color(theme::MUTED));
-                ui.label(RichText::new(entry.scope.label()).color(theme::MUTED));
+                ui.label(
+                    RichText::new(format!(
+                        "{} · {}",
+                        entry.scope.label(),
+                        entry.source.label()
+                    ))
+                    .color(theme::MUTED),
+                );
                 if !entry.scope.can_toggle() {
                     ui.label(
                         RichText::new("System-wide; requires Administrator to change")
@@ -907,9 +1033,19 @@ fn build_diagnostics(logs_dir: Option<&Path>) -> Vec<Operation> {
 }
 
 impl eframe::App for ToolkitApp {
+    /// Runs before every frame, and also while the window is minimized, when
+    /// eframe calls only this. A run that ends while minimized is still
+    /// recorded, and a close request during a run still waits for it.
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.run.drain(&self.worker);
+        if refuse_close_while_running(ctx, self.is_running()) {
+            tracing::info!("close refused while an operation runs");
+            self.close_refused = true;
+        }
+    }
+
     fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = root.ctx().clone();
-        self.run.drain(&self.worker);
         self.updater.poll(&mut self.update_settings);
         self.draw_header(root);
         self.draw_sidebar(root);
@@ -981,6 +1117,98 @@ mod tests {
             RunStatus::Finished(Outcome::Error(_))
         ));
         assert!(!worker.send(Command::Run(operation("second"))));
+    }
+
+    fn close_requested_input() -> egui::RawInput {
+        let mut input = egui::RawInput::default();
+        input
+            .viewports
+            .get_mut(&egui::ViewportId::ROOT)
+            .unwrap()
+            .events
+            .push(egui::ViewportEvent::Close);
+        input
+    }
+
+    fn logic_commands(input: &egui::RawInput, running: bool) -> (bool, Vec<egui::ViewportCommand>) {
+        let ctx = egui::Context::default();
+        let mut refused = false;
+        let output = ctx.run_logic(input, |ctx| {
+            refused = refuse_close_while_running(ctx, running);
+        });
+        let commands = output
+            .viewport_commands
+            .get(&egui::ViewportId::ROOT)
+            .cloned()
+            .unwrap_or_default();
+        (refused, commands)
+    }
+
+    #[test]
+    fn closing_during_a_run_is_cancelled_and_the_window_shown() {
+        let (refused, commands) = logic_commands(&close_requested_input(), true);
+        assert!(refused);
+        assert_eq!(
+            commands,
+            [
+                egui::ViewportCommand::CancelClose,
+                egui::ViewportCommand::Minimized(false),
+                egui::ViewportCommand::Focus,
+            ]
+        );
+    }
+
+    #[test]
+    fn closing_without_a_run_goes_ahead() {
+        let (refused, commands) = logic_commands(&close_requested_input(), false);
+        assert!(!refused);
+        assert_eq!(commands, [] as [egui::ViewportCommand; 0]);
+        let (refused, commands) = logic_commands(&egui::RawInput::default(), true);
+        assert!(!refused);
+        assert_eq!(commands, [] as [egui::ViewportCommand; 0]);
+    }
+
+    #[test]
+    fn overview_loads_once_and_keeps_old_information_while_refreshing() {
+        let mut overview = Overview::default();
+        assert!(overview.needs_first_load());
+        let (sender, receiver) = crossbeam_channel::bounded(1);
+        overview.request(|| receiver);
+        assert!(overview.is_loading());
+        assert!(!overview.needs_first_load());
+        // A second request while one runs starts nothing.
+        overview.request(|| panic!("a collection is already running"));
+        overview.poll();
+        assert!(overview.is_loading());
+
+        sender.send(toolkit_platform::system_info()).unwrap();
+        overview.poll();
+        assert!(!overview.is_loading());
+        assert!(overview.info.is_some());
+
+        let (sender, receiver) = crossbeam_channel::bounded(1);
+        overview.request(|| receiver);
+        assert!(overview.info.is_some());
+        drop(sender);
+        overview.poll();
+        assert!(!overview.is_loading());
+        assert!(overview.failed);
+        assert!(overview.info.is_some());
+    }
+
+    #[test]
+    fn a_failed_first_load_waits_for_refresh() {
+        let mut overview = Overview::default();
+        let (sender, receiver) = crossbeam_channel::bounded::<SystemInfo>(1);
+        overview.request(|| receiver);
+        drop(sender);
+        overview.poll();
+        assert!(overview.failed);
+        assert!(!overview.needs_first_load());
+        let (_sender, receiver) = crossbeam_channel::bounded(1);
+        overview.request(|| receiver);
+        assert!(!overview.failed);
+        assert!(overview.is_loading());
     }
 
     #[test]

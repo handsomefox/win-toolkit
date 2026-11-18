@@ -3,14 +3,14 @@
 //! on a running operation.
 
 use std::io::{Read, Seek, SeekFrom};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use eframe::egui;
 use toolkit_core::{
-    CommandLine, Elevation, Execution, Operation, POWERSHELL, compact_lines, console_lines,
-    elevated_cmd_parameters, looks_like_utf16le,
+    CommandLine, Elevation, Execution, Operation, POWERSHELL, SystemInfo, compact_lines,
+    console_lines, elevated_cmd_parameters, looks_like_utf16le, system_program_path,
 };
 use toolkit_platform::{ExecError, launch, run_capture, run_elevated};
 
@@ -98,6 +98,25 @@ pub(crate) fn spawn(ctx: egui::Context) -> Worker {
     }
 }
 
+/// Collects the Overview's system information on a new thread, then repaints.
+///
+/// It gets its own thread rather than the worker's queue, because an operation
+/// such as `sfc` keeps the worker busy for many minutes. If the thread cannot
+/// start or panics, the receiver disconnects with nothing in it.
+pub(crate) fn collect_system_info(ctx: egui::Context) -> Receiver<SystemInfo> {
+    let (sender, receiver) = crossbeam_channel::bounded(1);
+    let spawned = std::thread::Builder::new()
+        .name("toolkit-sysinfo".to_owned())
+        .spawn(move || {
+            let _ = sender.send(toolkit_platform::system_info());
+            ctx.request_repaint();
+        });
+    if let Err(error) = spawned {
+        tracing::warn!(%error, "could not start collecting system information");
+    }
+    receiver
+}
+
 fn run(ctx: &egui::Context, commands: &Receiver<Command>, events: &Sender<Event>) {
     let emit = |event: Event| {
         let _ = events.send(event);
@@ -111,14 +130,25 @@ fn run(ctx: &egui::Context, commands: &Receiver<Command>, events: &Sender<Event>
 }
 
 fn run_operation(operation: &Operation, emit: &impl Fn(Event)) {
+    let system_dir = toolkit_platform::system_directory();
+    let system_dir = system_dir.to_string_lossy();
     match &operation.execution {
-        Execution::Launch { target, args } => run_launch(operation, target, args, emit),
+        Execution::Launch { target, args } => {
+            // A bare name such as `dxdiag` would be looked up in the app's
+            // folder and the working directory first.
+            let target = system_program_path(target, &system_dir).unwrap_or_else(|| target.clone());
+            run_launch(operation, &target, args, emit);
+        }
         Execution::Capture(command) => {
             let powershell = toolkit_platform::windows_powershell();
             let command = command.with_program_path(POWERSHELL, &powershell.to_string_lossy());
             if operation.elevation == Elevation::Administrator {
                 run_elevated_capture(operation, &command, emit);
             } else {
+                // `Command` looks a bare name up in the app's own folder
+                // first. The elevated `cmd.exe` starts in the system
+                // directory, so its lookup finds the real tool.
+                let command = command.with_system_directory(&system_dir);
                 run_unelevated_capture(operation, &command, emit);
             }
         }
@@ -181,6 +211,10 @@ fn run_elevated_capture(operation: &Operation, command: &CommandLine, emit: &imp
         ))));
         return;
     }
+    if let Some(parent) = output_path.parent() {
+        // Leave room for this run's log.
+        prune_run_logs(parent, MAX_RUN_LOGS - 1);
+    }
 
     let parameters = elevated_cmd_parameters(command, &output_path.to_string_lossy());
     tracing::info!(operation = operation.id, "launching elevated operation");
@@ -229,9 +263,59 @@ fn run_elevated_capture(operation: &Operation, command: &CommandLine, emit: &imp
     }
 }
 
+/// How many logs of elevated runs the `runs` folder keeps.
+const MAX_RUN_LOGS: usize = 50;
+
+/// The format of the time stamp in a run log's name.
+const RUN_STAMP: &str = "%Y%m%d-%H%M%S";
+
 fn output_path(operation_id: &str) -> Option<PathBuf> {
-    let stamp = jiff::Zoned::now().strftime("%Y%m%d-%H%M%S").to_string();
+    let stamp = jiff::Zoned::now().strftime(RUN_STAMP).to_string();
     toolkit_platform::runs_dir().map(|dir| dir.join(format!("{operation_id}-{stamp}.log")))
+}
+
+/// The time stamp in the name of a log [`output_path`] makes:
+/// `<operation id>-YYYYMMDD-HHMMSS.log`, where the id is lowercase letters,
+/// digits, and hyphens, and the time exists. `None` for any other name.
+fn run_log_stamp(name: &str) -> Option<jiff::civil::DateTime> {
+    let stem = name.strip_suffix(".log")?;
+    let split = stem.len().checked_sub("-YYYYMMDD-HHMMSS".len())?;
+    let id = stem.get(..split)?;
+    let stamp = stem.get(split..)?.strip_prefix('-')?;
+    let id_ok = !id.is_empty()
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-');
+    let stamp_ok = stamp.bytes().enumerate().all(|(index, byte)| match index {
+        8 => byte == b'-',
+        _ => byte.is_ascii_digit(),
+    });
+    if !id_ok || !stamp_ok {
+        return None;
+    }
+    jiff::civil::DateTime::strptime(RUN_STAMP, stamp).ok()
+}
+
+/// Deletes the oldest of this app's run logs in `dir` beyond the newest
+/// `keep`, by the time in their names. Other files are left alone.
+fn prune_run_logs(dir: &Path, keep: usize) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut logs: Vec<(jiff::civil::DateTime, PathBuf)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let stamp = run_log_stamp(entry.file_name().to_str()?)?;
+            Some((stamp, entry.path()))
+        })
+        .collect();
+    logs.sort();
+    let excess = logs.len().saturating_sub(keep);
+    for (_, path) in logs.into_iter().take(excess) {
+        if let Err(error) = std::fs::remove_file(&path) {
+            tracing::warn!(%error, "could not delete the old run log {}", path.display());
+        }
+    }
 }
 
 const MAX_DISPLAY_BYTES: usize = 256 * 1024;
@@ -245,11 +329,11 @@ struct LogTail {
 }
 
 impl LogTail {
-    fn read(&mut self, path: &std::path::Path) -> Option<Vec<String>> {
+    fn read(&mut self, path: &Path) -> Option<Vec<String>> {
         self.read_file(path).ok().flatten()
     }
 
-    fn read_file(&mut self, path: &std::path::Path) -> std::io::Result<Option<Vec<String>>> {
+    fn read_file(&mut self, path: &Path) -> std::io::Result<Option<Vec<String>>> {
         let mut file = std::fs::File::open(path)?;
         let length = file.metadata()?.len();
         if length == self.offset {
@@ -319,6 +403,59 @@ mod tests {
     fn only_exit_code_zero_is_success() {
         assert!(matches!(Outcome::from_exit_code(0), Outcome::Success));
         assert!(matches!(Outcome::from_exit_code(1), Outcome::Failed(1)));
+    }
+
+    #[test]
+    fn run_log_names_parse_only_in_the_format_the_app_writes() {
+        let stamp = run_log_stamp("sfc-scannow-20260102-030405.log").unwrap();
+        assert_eq!(stamp, jiff::civil::date(2026, 1, 2).at(3, 4, 5, 0));
+        assert!(run_log_stamp("dism-restorehealth-20251231-235959.log").is_some());
+        for name in [
+            "sfc-scannow-20260102-030405.txt",
+            "-20260102-030405.log",
+            "20260102-030405.log",
+            "sfc_scannow-20260102-030405.log",
+            "SFC-20260102-030405.log",
+            "sfc-20261302-030405.log",
+            "sfc-20260102-250405.log",
+            "sfc-2026010-2030405.log",
+            "sfc-20260102-030405 (kept).log",
+            "sfc-2026010é-030405.log",
+            "notes.log",
+            ".log",
+        ] {
+            assert!(run_log_stamp(name).is_none(), "{name}");
+        }
+    }
+
+    #[test]
+    fn pruning_keeps_the_newest_run_logs_and_other_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let ids = ["sfc-scannow", "dism-restorehealth", "reset-tcpip"];
+        let mut names = Vec::new();
+        for minute in 0..52 {
+            // Ids differ, so the names do not sort by time.
+            let id = ids[minute % ids.len()];
+            names.push(format!("{id}-20260102-03{minute:02}00.log"));
+        }
+        for name in names
+            .iter()
+            .chain(&["notes.txt".to_owned(), "kept.log".to_owned()])
+        {
+            std::fs::write(dir.path().join(name), b"").unwrap();
+        }
+
+        prune_run_logs(dir.path(), MAX_RUN_LOGS - 1);
+
+        let mut left: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        left.sort();
+        let mut expected: Vec<String> = names[3..].to_vec();
+        expected.extend(["kept.log".to_owned(), "notes.txt".to_owned()]);
+        expected.sort();
+        assert_eq!(left, expected);
     }
 
     #[test]

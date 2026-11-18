@@ -12,8 +12,9 @@ use std::borrow::Cow;
 /// runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommandSpec {
-    /// The executable to run (e.g. `sfc`, `dism`). Resolved via the child
-    /// `cmd.exe`'s `PATH`.
+    /// The executable to run (e.g. `sfc`, `dism`). An elevated run looks it up
+    /// from `cmd.exe`, which starts in the system directory. An unelevated run
+    /// resolves a bare name with [`system_program_path`].
     pub program: String,
     /// The arguments passed to `program`, one token per element.
     pub args: Vec<String>,
@@ -69,6 +70,19 @@ impl CommandLine {
         }
     }
 
+    /// This command line, running a program given by bare name from
+    /// `system_dir`, as [`system_program_path`] resolves it.
+    #[must_use]
+    pub fn with_system_directory(&self, system_dir: &str) -> Self {
+        match self {
+            CommandLine::Program(spec) => match system_program_path(&spec.program, system_dir) {
+                Some(path) => self.with_program_path(&spec.program, &path),
+                None => self.clone(),
+            },
+            CommandLine::Script(_) => self.clone(),
+        }
+    }
+
     /// Renders the command portion (before any redirection): a quoted program
     /// and arguments, or the raw script text.
     #[must_use]
@@ -84,6 +98,26 @@ impl CommandLine {
             }
             CommandLine::Script(raw) => raw.clone(),
         }
+    }
+}
+
+/// The full path in `system_dir` of a program given by bare name, such as
+/// `ipconfig` or `dxdiag.exe`. A name without an extension gets `.exe`.
+/// Returns `None` for anything that is already a path.
+///
+/// The tools the app runs ship in the Windows system directory. Started by
+/// bare name, Windows looks for them in the app's own folder and the current
+/// directory first, where any file could sit under that name.
+#[must_use]
+pub fn system_program_path(program: &str, system_dir: &str) -> Option<String> {
+    if program.is_empty() || program.contains(['\\', '/', ':']) {
+        return None;
+    }
+    let dir = system_dir.trim_end_matches('\\');
+    if std::path::Path::new(program).extension().is_some() {
+        Some(format!(r"{dir}\{program}"))
+    } else {
+        Some(format!(r"{dir}\{program}.exe"))
     }
 }
 
@@ -268,6 +302,49 @@ mod tests {
         );
         let other = CommandLine::program("sfc", &["/scannow"]);
         assert_eq!(other.with_program_path(POWERSHELL, path), other);
+    }
+
+    #[test]
+    fn bare_program_names_resolve_in_the_system_directory() {
+        let system = r"C:\Windows\System32";
+        assert_eq!(
+            system_program_path("ipconfig", system).as_deref(),
+            Some(r"C:\Windows\System32\ipconfig.exe")
+        );
+        assert_eq!(
+            system_program_path("dxdiag.exe", r"C:\Windows\System32\").as_deref(),
+            Some(r"C:\Windows\System32\dxdiag.exe")
+        );
+    }
+
+    #[test]
+    fn paths_are_not_resolved_again() {
+        let system = r"C:\Windows\System32";
+        for program in [
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+            r".\ipconfig.exe",
+            "tools/ipconfig",
+            "C:ipconfig.exe",
+            r"\\server\share\report.html",
+            "",
+        ] {
+            assert_eq!(system_program_path(program, system), None, "{program}");
+        }
+    }
+
+    #[test]
+    fn system_directory_replaces_only_a_bare_program() {
+        let system = r"C:\Windows\System32";
+        let command = CommandLine::program("powercfg", &["/list"]).with_system_directory(system);
+        assert_eq!(
+            command,
+            CommandLine::program(r"C:\Windows\System32\powercfg.exe", &["/list"])
+        );
+        let path = r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe";
+        let full = CommandLine::program(path, &["-Command", "ipconfig"]);
+        assert_eq!(full.with_system_directory(system), full);
+        let script = CommandLine::Script("ipconfig & ipconfig".to_owned());
+        assert_eq!(script.with_system_directory(system), script);
     }
 
     #[test]
